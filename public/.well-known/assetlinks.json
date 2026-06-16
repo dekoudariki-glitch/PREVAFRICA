@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.devkouda.prevafrica",
+      "sha256_cert_fingerprints": [
+        "BB:12:89:68:36:11:CB:65:6A:29:7D:7D:4C:D4:9A:6E:92:C9:74:99:BA:84:C2:B5:11:7A:5E:53:61:80:BA:2A"
+      ]
+    }
+  }
+]
