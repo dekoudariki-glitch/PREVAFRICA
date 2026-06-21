@@ -158,8 +158,17 @@ async function startServer() {
       icon: "prevafrica_icon_final_1779225207177.png",
       feature: "prevafrica_feature_graphic_1779225225363.png",
       phone: "prevafrica_phone_screenshot_1779225243191.png",
+      phone2: "prevafrica_phone_screenshot2_1779361339832.png",
+      phone3: "prevafrica_phone3_1779363677410.png",
+      phone4: "prevafrica_phone4_1779363695602.png",
       tablet7: "prevafrica_tablet7_screenshot_1779225262633.png",
-      tablet10: "prevafrica_tablet10_screenshot_1779225282773.png"
+      tablet7_2: "prevafrica_tablet7_screenshot2_1779361357192.png",
+      tablet7_3: "prevafrica_tablet7_3_1779363717005.png",
+      tablet7_4: "prevafrica_tablet7_4_1779363732227.png",
+      tablet10: "prevafrica_tablet10_v2_1_1779365653909.png",
+      tablet10_2: "prevafrica_tablet10_v2_2_1779365674341.png",
+      tablet10_3: "prevafrica_tablet10_v2_3_1779365695121.png",
+      tablet10_4: "prevafrica_tablet10_v2_4_1779365719697.png"
     };
 
     const targetFile = fileMap[key];
@@ -198,6 +207,7 @@ async function startServer() {
       if (fs.existsSync(filePath)) {
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=31536000');
+        res.setHeader('Access-Control-Allow-Origin', '*');
         return res.sendFile(path.resolve(filePath));
       }
     }

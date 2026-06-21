@@ -280,27 +280,8 @@ export default function App() {
   const [showPrevention, setShowPrevention] = useState(false);
 
   const handleDownloadAsset = (key: string) => {
-    const fileMap: Record<string, string> = {
-      icon: "https://tmpfiles.org/dl/wXwYl0BZTn8d/prevafrica_icon_final_1779225207177.png",
-      feature: "https://tmpfiles.org/dl/w9wRlQBUT7Et/prevafrica_feature_graphic_1779225225363.png",
-      phone: "https://tmpfiles.org/dl/wZwrlhBKTdpM/prevafrica_phone_screenshot_1779225243191.png",
-      phone2: "https://tmpfiles.org/dl/wxwlluBCIVFt/prevafrica_phone_screenshot2_1779361339832.png",
-      phone3: "https://tmpfiles.org/dl/wIwDlssTrpgk/prevafrica_phone3_1779363677410.png",
-      phone4: "https://tmpfiles.org/dl/wEwil4s3rx65/prevafrica_phone4_1779363695602.png",
-      tablet7: "https://tmpfiles.org/dl/wKwuldB8dHw6/prevafrica_tablet7_screenshot_1779225262633.png",
-      tablet7_2: "https://tmpfiles.org/dl/wxwflvBbIDOy/prevafrica_tablet7_screenshot2_1779361357192.png",
-      tablet7_3: "https://tmpfiles.org/dl/wkw5lqsirncP/prevafrica_tablet7_3_1779363717005.png",
-      tablet7_4: "https://tmpfiles.org/dl/wSwTlSserDMR/prevafrica_tablet7_4_1779363732227.png",
-      tablet10: "https://tmpfiles.org/dl/w7w0l6hM2gzF/prevafrica_tablet10_v2_1_1779365653909.png",
-      tablet10_2: "https://tmpfiles.org/dl/wfwCl3h42DiG/prevafrica_tablet10_v2_2_1779365674341.png",
-      tablet10_3: "https://tmpfiles.org/dl/wUw8lJhW2rRH/prevafrica_tablet10_v2_3_1779365695121.png",
-      tablet10_4: "https://tmpfiles.org/dl/wjwqlXhLGAGc/prevafrica_tablet10_v2_4_1779365719697.png"
-    };
-
-    const downloadUrl = fileMap[key];
-    if (downloadUrl) {
-      window.open(downloadUrl, '_blank');
-    }
+    // Redirige vers notre API locale robuste et permanente plutôt que d'utiliser des liens temporaires expirés
+    window.open(`/api/download-assets/${key}`, '_blank');
   };
   const [partnerType, setPartnerType] = useState<'INSURER' | 'BANK'>('INSURER');
   const [produit, setProduit] = useState<Offre | null>(null);
