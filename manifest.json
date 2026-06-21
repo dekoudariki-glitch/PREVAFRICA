@@ -1,0 +1,94 @@
+{
+  "id": "/?source=pwa",
+  "name": "PREVAFRICA - Solutions de Prévoyance Panafricaine",
+  "short_name": "PREVAFRICA",
+  "description": "Première plateforme panafricaine de prévoyance, santé et micro-crédit adaptée aux zones CFA.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#10b981",
+  "orientation": "portrait",
+  "lang": "fr-FR",
+  "dir": "ltr",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "iarc_rating_id": "0000",
+  "display_override": ["standalone", "window-controls-overlay"],
+  "scope_extensions": [
+    {
+      "origin": "*.run.app"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "text/plain": [".txt"]
+      },
+      "icons": [
+        {
+          "src": "/images/prevafrica_icon_192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ],
+      "launch_type": "single-client"
+    }
+  ],
+  "icons": [
+    {
+      "src": "/images/prevafrica_icon_192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/prevafrica_icon_512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/prevafrica_icon_512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Simuler un micro-crédit",
+      "short_name": "Simulation",
+      "description": "Simuler une formule de micro-crédit PREVAFRICA",
+      "url": "/?shortcut=simulate",
+      "icons": [{ "src": "/images/prevafrica_icon_192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Adhésion Prévoyance",
+      "short_name": "Adhésion",
+      "description": "S'inscrire et commencer une couverture",
+      "url": "/?shortcut=join",
+      "icons": [{ "src": "/images/prevafrica_icon_192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "categories": ["finance", "lifestyle", "productivity"],
+  "screenshots": [
+    {
+      "src": "/images/prevafrica_phone_screenshot.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Interface Mobile PREVAFRICA"
+    },
+    {
+      "src": "/images/prevafrica_tablet_screenshot.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Interface Tablette/Ordinateur PREVAFRICA"
+    }
+  ]
+}
