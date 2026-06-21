@@ -1,0 +1,7 @@
+/privacy /privacy.html 200
+/confidentialite /privacy.html 200
+/delete /delete.html 200
+/suppr /delete.html 200
+/account-deletion /delete.html 200
+/diagnostic /diagnostic.html 200
+/api/diagnostic /diagnostic.html 200
