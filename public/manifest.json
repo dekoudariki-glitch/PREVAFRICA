@@ -22,22 +22,6 @@
   "launch_handler": {
     "client_mode": "focus-existing"
   },
-  "file_handlers": [
-    {
-      "action": "/",
-      "accept": {
-        "text/plain": [".txt"]
-      },
-      "icons": [
-        {
-          "src": "/images/prevafrica_icon_192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ],
-      "launch_type": "single-client"
-    }
-  ],
   "icons": [
     {
       "src": "/images/prevafrica_icon_192.png",
