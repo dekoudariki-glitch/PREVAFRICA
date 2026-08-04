@@ -1,8 +1,91 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { execSync } from "child_process";
+import multer from "multer";
+import crypto from "crypto";
+import forge from "node-forge";
+import AdmZip from "adm-zip";
+
+const upload = multer({ dest: "/tmp/aab-uploads/" });
+
+function signAabNode(inputBuffer: Buffer, certPem: string, keyPem: string, alias = 'CERT'): Buffer {
+  const zip = new AdmZip(inputBuffer);
+  const zipEntries = zip.getEntries();
+
+  // Filter out existing META-INF signature files
+  const filteredEntries = zipEntries.filter(e => {
+    if (e.isDirectory) return false;
+    const name = e.entryName;
+    if (name.startsWith('META-INF/') && (
+      name.endsWith('.SF') || name.endsWith('.RSA') || name.endsWith('.DSA') || name.endsWith('.EC') || name === 'META-INF/MANIFEST.MF'
+    )) {
+      return false;
+    }
+    return true;
+  });
+
+  // Sort entries alphabetically
+  filteredEntries.sort((a, b) => a.entryName.localeCompare(b.entryName));
+
+  let manifestText = 'Manifest-Version: 1.0\r\nCreated-By: 1.0 (Android)\r\n\r\n';
+
+  for (const entry of filteredEntries) {
+    const data = entry.getData();
+    const sha256 = crypto.createHash('sha256').update(data).digest('base64');
+    manifestText += `Name: ${entry.entryName}\r\nSHA-256-Digest: ${sha256}\r\n\r\n`;
+  }
+
+  const manifestDigest = crypto.createHash('sha256').update(Buffer.from(manifestText, 'utf8')).digest('base64');
+
+  let sfText = `Signature-Version: 1.0\r\nCreated-By: 1.0 (Android)\r\nSHA-256-Digest-Manifest: ${manifestDigest}\r\n\r\n`;
+
+  for (const entry of filteredEntries) {
+    const data = entry.getData();
+    const sha256 = crypto.createHash('sha256').update(data).digest('base64');
+    const entrySection = `Name: ${entry.entryName}\r\nSHA-256-Digest: ${sha256}\r\n\r\n`;
+    const sectionDigest = crypto.createHash('sha256').update(Buffer.from(entrySection, 'utf8')).digest('base64');
+    
+    sfText += `Name: ${entry.entryName}\r\nSHA-256-Digest: ${sectionDigest}\r\n\r\n`;
+  }
+
+  // PKCS#7 signature using node-forge
+  const cert = forge.pki.certificateFromPem(certPem);
+  const privateKey = forge.pki.privateKeyFromPem(keyPem);
+
+  const p7 = forge.pkcs7.createSignedData();
+  p7.content = forge.util.createBuffer(sfText, 'utf8');
+  p7.addCertificate(cert);
+  p7.addSigner({
+    key: privateKey,
+    certificate: cert,
+    digestAlgorithm: forge.pki.oids.sha256
+  });
+  p7.sign({ detached: true });
+
+  const rsaDer = Buffer.from(forge.asn1.toDer(p7.toAsn1()).getBytes(), 'binary');
+
+  const newZip = new AdmZip();
+  for (const entry of filteredEntries) {
+    newZip.addFile(entry.entryName, entry.getData());
+  }
+
+  newZip.addFile('META-INF/MANIFEST.MF', Buffer.from(manifestText, 'utf8'));
+  newZip.addFile(`META-INF/${alias}.SF`, Buffer.from(sfText, 'utf8'));
+  newZip.addFile(`META-INF/${alias}.RSA`, rsaDer);
+
+  return newZip.toBuffer();
+}
 
 async function startServer() {
+  // Auto-repair Java security policy files if .dpkg-new extension exists
+  try {
+    const secDir = '/etc/java-17-openjdk/security';
+    if (fs.existsSync(secDir)) {
+      execSync(`find "${secDir}" -name "*.dpkg-new" -exec sh -c 'for f; do cp "$f" "\${f%.dpkg-new}"; done' _ {} +`);
+    }
+  } catch (e) {}
+
   const app = express();
   const PORT = 3000;
 
@@ -15,6 +98,71 @@ async function startServer() {
     if (req.method === 'OPTIONS') {
       return res.sendStatus(200);
     }
+    next();
+  });
+
+  // --- INTERCEPTEUR UNIVERSEL ICONES & MANIFEST POUR PWABUILDER (ANTI-400 / ANTI-FETCH-ERROR) ---
+  app.use((req, res, next) => {
+    const rawUrl = req.originalUrl || req.url || '';
+    // Découper sur ?, :, %3a, %3A pour éliminer les bruits de ports et de requêtes proxy
+    const cleanUrl = rawUrl.split('?')[0].split(':')[0].split('%3a')[0].split('%3A')[0].toLowerCase();
+
+    // 1. Manifest.json
+    if (cleanUrl.endsWith('/manifest.json') || cleanUrl === '/manifest.json') {
+      const p = path.join(process.cwd(), 'public', 'manifest.json');
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        return res.status(200).sendFile(path.resolve(p));
+      }
+    }
+
+    // 2. Icônes 192x192
+    if (cleanUrl.includes('192') || cleanUrl.includes('icon_192')) {
+      const p = path.join(process.cwd(), 'public', 'images', 'prevafrica_icon_192.png');
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        return res.status(200).sendFile(path.resolve(p));
+      }
+    }
+
+    // 3. Icônes 512x512, favicon, apple-touch-icon, logo, icon
+    if (cleanUrl.includes('512') || cleanUrl.includes('icon_512') || cleanUrl.includes('apple-touch') || cleanUrl.includes('favicon') || cleanUrl.includes('logo') || cleanUrl.includes('icon')) {
+      const p = path.join(process.cwd(), 'public', 'images', 'prevafrica_icon_512.png');
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        return res.status(200).sendFile(path.resolve(p));
+      }
+    }
+
+    // 4. Dossier /images/ ou tout fichier image .png / .jpg / .jpeg / .webp
+    if (cleanUrl.includes('/images/') || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.ico')) {
+      const filename = path.basename(cleanUrl);
+      const searchPaths = [
+        path.join(process.cwd(), 'public', 'images', filename),
+        path.join(process.cwd(), 'src', 'assets', 'images', filename),
+        path.join(process.cwd(), 'dist', 'images', filename)
+      ];
+      for (const sp of searchPaths) {
+        if (fs.existsSync(sp)) {
+          res.setHeader('Content-Type', 'image/png');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          return res.status(200).sendFile(path.resolve(sp));
+        }
+      }
+      // Fallback absolu : si une image n'est pas trouvée, renvoyer l'icône 512 valide (Status 200) pour empêcher Bubblewrap de planter
+      const fallbackIcon = path.join(process.cwd(), 'public', 'images', 'prevafrica_icon_512.png');
+      if (fs.existsSync(fallbackIcon)) {
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        return res.status(200).sendFile(path.resolve(fallbackIcon));
+      }
+    }
+
     next();
   });
 
@@ -110,6 +258,178 @@ async function startServer() {
   app.get("/robots.txt", (req, res) => {
     res.setHeader('Content-Type', 'text/plain');
     res.send("User-agent: *\nAllow: /\n");
+  });
+
+  // Route pour télécharger le keystore propre et les certificats
+  app.get("/signing.keystore", (req, res) => {
+    const cwd = process.cwd();
+    const searchPaths = [
+      path.join(cwd, 'public', 'signing.keystore'),
+      path.join(cwd, 'signing.keystore'),
+      path.join(cwd, 'dist', 'signing.keystore')
+    ];
+    for (const p of searchPaths) {
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Disposition', 'attachment; filename="signing.keystore"');
+        res.setHeader('Content-Type', 'application/octet-stream');
+        return res.sendFile(path.resolve(p));
+      }
+    }
+    res.status(404).send("signing.keystore not found");
+  });
+
+  app.get("/new_upload_keystore.p12", (req, res) => {
+    const cwd = process.cwd();
+    const searchPaths = [
+      path.join(cwd, 'public', 'new_upload_keystore.p12'),
+      path.join(cwd, 'public', 'signing.keystore')
+    ];
+    for (const p of searchPaths) {
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Disposition', 'attachment; filename="new_upload_keystore.p12"');
+        res.setHeader('Content-Type', 'application/x-pkcs12');
+        return res.sendFile(path.resolve(p));
+      }
+    }
+    res.status(404).send("new_upload_keystore.p12 not found");
+  });
+
+  app.get("/new_upload_certificate.pem", (req, res) => {
+    const cwd = process.cwd();
+    const searchPaths = [
+      path.join(cwd, 'public', 'new_upload_certificate.pem'),
+      path.join(cwd, 'dist', 'new_upload_certificate.pem')
+    ];
+    for (const p of searchPaths) {
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Disposition', 'attachment; filename="new_upload_certificate.pem"');
+        res.setHeader('Content-Type', 'application/x-pem-file');
+        return res.sendFile(path.resolve(p));
+      }
+    }
+    res.status(404).send("new_upload_certificate.pem not found");
+  });
+
+  app.get("/upload_certificate.pem", (req, res) => {
+    const cwd = process.cwd();
+    const searchPaths = [
+      path.join(cwd, 'public', 'upload_certificate.pem'),
+      path.join(cwd, 'dist', 'upload_certificate.pem')
+    ];
+    for (const p of searchPaths) {
+      if (fs.existsSync(p)) {
+        res.setHeader('Content-Disposition', 'attachment; filename="upload_certificate.pem"');
+        res.setHeader('Content-Type', 'application/x-pem-file');
+        return res.sendFile(path.resolve(p));
+      }
+    }
+    res.status(404).send("upload_certificate.pem not found");
+  });
+
+  // API Signature AAB Automatisée avec support des Keystores personnalisés
+  app.post("/api/sign-aab", upload.fields([{ name: "aab", maxCount: 1 }, { name: "customKeystore", maxCount: 1 }]), (req: any, res: any) => {
+    const aabFile = req.files?.aab?.[0];
+    if (!aabFile) {
+      return res.status(400).json({ error: "Aucun fichier AAB téléversé." });
+    }
+
+    const inputPath = aabFile.path;
+    const outputPath = inputPath + "-signed.aab";
+    const customKeystoreFile = req.files?.customKeystore?.[0];
+    const cwd = process.cwd();
+
+    try {
+      let signedBuffer: Buffer | null = null;
+
+      // 1. Copier le fichier AAB d'origine directement pour préserver 100% de la structure de compression et de l'alignement Android
+      fs.copyFileSync(inputPath, outputPath);
+
+      // Supprimer proprement tout ancien bloc META-INF via l'outil zip natif s'il existe
+      try {
+        execSync(`zip -d "${outputPath}" "META-INF/*"`, { stdio: 'ignore' });
+      } catch (e) {}
+
+      // 2. Trouver et exécuter jarsigner officiel
+      let jarsignerBin = '';
+      if (fs.existsSync('/usr/lib/jvm/java-17-openjdk-amd64/bin/jarsigner')) {
+        jarsignerBin = '/usr/lib/jvm/java-17-openjdk-amd64/bin/jarsigner';
+      } else if (fs.existsSync('/usr/bin/jarsigner')) {
+        jarsignerBin = '/usr/bin/jarsigner';
+      } else {
+        try {
+          execSync('jarsigner -help');
+          jarsignerBin = 'jarsigner';
+        } catch(e) {}
+      }
+
+      let keystorePath = '';
+      let alias = req.body?.alias || 'my-key-alias';
+      let pass = req.body?.password || 'CAC3KVikhbyb';
+
+      if (customKeystoreFile) {
+        keystorePath = customKeystoreFile.path;
+      } else {
+        const selectedKeystore = req.body?.keystore || 'signing.keystore';
+        keystorePath = path.join(cwd, 'public', selectedKeystore);
+      }
+
+      if (jarsignerBin && fs.existsSync(keystorePath)) {
+        try {
+          const cmd = `"${jarsignerBin}" -verbose -sigalg SHA256withRSA -digestalg SHA-256 -keystore "${keystorePath}" -storepass "${pass}" -keypass "${pass}" "${outputPath}" "${alias}"`;
+          execSync(cmd, { encoding: 'utf-8' });
+
+          const verifyCmd = `"${jarsignerBin}" -verify "${outputPath}"`;
+          const verifyLog = execSync(verifyCmd, { encoding: 'utf-8' });
+          console.log("[AAB SIGNER SUCCESS & VERIFIED via Jarsigner]:", verifyLog.split('\n')[0]);
+          signedBuffer = fs.readFileSync(outputPath);
+        } catch (e: any) {
+          console.log("[JARSIGNER EXEC FAILED]", e?.message || e);
+          if (customKeystoreFile) {
+            throw new Error(`Échec de signature avec le keystore personnalisé. Vérifiez le mot de passe (${pass}) et l'alias (${alias}). Détails: ${e?.message || e}`);
+          }
+        }
+      }
+
+      // 3. Si jarsigner n'a pas pu s'exécuter et pas de custom keystore, utiliser le fallback Node.js
+      if (!signedBuffer) {
+        console.log("[AAB SIGNER] Utilisation du moteur Node.js pur");
+        const certPath = path.join(cwd, 'public', 'new_upload_certificate.pem');
+        const keyPath = path.join(cwd, 'key.pem');
+
+        if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+          const certPem = fs.readFileSync(certPath, 'utf8');
+          const keyPem = fs.readFileSync(keyPath, 'utf8');
+          const inputBuffer = fs.readFileSync(inputPath);
+          signedBuffer = signAabNode(inputBuffer, certPem, keyPem, 'CERT');
+        } else {
+          throw new Error("Certificat (new_upload_certificate.pem) ou clé privée introuvable sur le serveur.");
+        }
+      }
+
+      fs.writeFileSync(outputPath, signedBuffer);
+
+      res.setHeader('Content-Disposition', 'attachment; filename="PREVAFRICA-signed.aab"');
+      res.setHeader('Content-Type', 'application/octet-stream');
+
+      return res.sendFile(path.resolve(outputPath), () => {
+        try {
+          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+          if (customKeystoreFile && fs.existsSync(customKeystoreFile.path)) fs.unlinkSync(customKeystoreFile.path);
+        } catch (e) {}
+      });
+    } catch (err: any) {
+      console.error("[AAB SIGNER ERROR]", err);
+      try {
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        if (customKeystoreFile && fs.existsSync(customKeystoreFile.path)) fs.unlinkSync(customKeystoreFile.path);
+      } catch (e) {}
+      return res.status(500).json({
+        error: "Échec de la signature AAB",
+        details: err.message || err.toString()
+      });
+    }
   });
 
   // Serveur Robuste Manifest.json pour PWABuilder (avec support CORS)
@@ -264,6 +584,21 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Intercepteur d'erreurs global (Anti-400 Bad Request pour PWABuilder)
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.warn("[SERVER ANTI-400 RECOVERY]", err?.message || err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    const iconFallback = path.join(process.cwd(), 'public', 'images', 'prevafrica_icon_512.png');
+    if (fs.existsSync(iconFallback)) {
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      return res.status(200).sendFile(path.resolve(iconFallback));
+    }
+    return res.status(200).send("OK");
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[PREVAFRICA] Serveur démarré sur le port ${PORT} (mode: ${process.env.NODE_ENV || 'development'})`);

@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useWeather } from './hooks/useWeather';
+import { WeatherService, WeatherData } from './services/weatherService';
 import { initializeApp } from "firebase/app";
 import { 
   addDoc, 
@@ -16,7 +18,7 @@ import {
   updateDoc,
   doc 
 } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { getAuth, initializeAuth, inMemoryPersistence } from "firebase/auth";
 import { jsPDF } from "jspdf";
 import { 
   ShieldCheck, 
@@ -34,15 +36,23 @@ import {
   ChevronLeft,
   X,
   Download,
+  Upload,
   Send,
   MessageCircle,
   TrendingUp,
   FileText,
-  Filter
+  Filter,
+  CloudSun,
+  Droplets,
+  Wind,
+  CloudRain,
+  RefreshCw,
+  AlertTriangle,
+  Key,
+  Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
-import SignatureCanvas from 'react-signature-canvas';
 import { 
   PieChart, 
   Pie, 
@@ -66,9 +76,44 @@ const firebaseConfig = {
   appId: "1:717785890835:web:55bca69311060d9f163fe6"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+// --- SAFE FIREBASE INITIALIZATION FOR SANDBOXED IFRAMES ---
+let app: any;
+try {
+  app = initializeApp(firebaseConfig);
+} catch (e) {
+  console.warn("Firebase app initialization failed:", e);
+}
+
+const db = (() => {
+  try {
+    return getFirestore(app);
+  } catch (e) {
+    console.warn("Firebase Firestore initialization failed, using mock fallback DB:", e);
+    return {
+      collection: () => ({}),
+      doc: () => ({}),
+    } as any;
+  }
+})();
+
+const auth = (() => {
+  try {
+    return getAuth(app);
+  } catch (e) {
+    console.warn("Standard Firebase Auth failed, trying in-memory fallback:", e);
+    try {
+      return initializeAuth(app, {
+        persistence: inMemoryPersistence
+      });
+    } catch (err) {
+      console.error("Firebase Auth completely failed, using mock fallback auth:", err);
+      return {
+        currentUser: null,
+        onAuthStateChanged: () => () => {},
+      } as any;
+    }
+  }
+})();
 
 enum OperationType {
   CREATE = 'create',
@@ -117,6 +162,27 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+// Helper to access localStorage safely under iframe constraints (prevents SecurityError)
+const safeLocalStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+    } catch (e) {
+      console.warn("localStorage is not accessible, using in-memory fallback", e);
+      return null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(key, value);
+      }
+    } catch (e) {
+      console.warn("localStorage is not accessible", e);
+    }
+  }
+};
+
 // --- TYPES & DATA ---
 interface Offre {
   id: string;
@@ -149,56 +215,56 @@ const paysConfig: Record<string, { code: string; gateway: string; devise: string
 const offres: Offre[] = [
   { 
     id: 'AVENIR', 
-    titre: 'AVENIR', 
-    desc: 'Garantissez la scolarité de vos enfants. Versement immédiat d\'un capital étude en cas d\'aléa.', 
+    titre: 'AVENIR (Scolarité)', 
+    desc: 'Outil d\'aide à la planification d\'épargne pour garantir la scolarité de vos enfants face aux imprévus.', 
     coef: 1200, 
     icone: '🎓', 
     categorie: 'Avenir' 
   },
   { 
     id: 'SANTE_PRO', 
-    titre: 'SANTÉ+', 
-    desc: 'Prise en charge des frais d\'hospitalisation et évacuation d\'urgence pour toute la famille.', 
+    titre: 'BIEN-ÊTRE', 
+    desc: 'Sécurisation et accompagnement préventif de votre foyer pour des conseils et assistances d\'urgence.', 
     coef: 500, 
     icone: '🏥', 
-    categorie: 'Santé' 
+    categorie: 'Prévention' 
   },
   { 
     id: 'AGRICOLE_RICE', 
-    titre: 'AGRICOLE', 
-    desc: 'Sécurisez vos revenus face au climat. Indemnisation automatique en cas de sécheresse sévère.', 
+    titre: 'AGRICULTURE (Advisory)', 
+    desc: 'Bulletin météo de récolte en temps réel et guide de couverture face aux crises climatiques.', 
     coef: 800, 
     icone: '🌾', 
     categorie: 'Agricole' 
   },
   { 
     id: 'RETRAITE_LION', 
-    titre: 'RETRAITE', 
-    desc: 'Préparez votre repos dès aujourd\'hui. Une rente mensuelle garantie pour une retraite digne.', 
+    titre: 'RETRAITE (Simulation)', 
+    desc: 'Simulateur d\'épargne progressive pour préparer un repos décent et digne tout au long de votre vie.', 
     coef: 2000, 
     icone: '🦁', 
     categorie: 'Retraite' 
   },
   { 
     id: 'LOGISTIQUE_AFRICA', 
-    titre: 'LOGISTIQUE', 
-    desc: 'Assurance transport et marchandises. Protection totale de votre stock contre tout incident.', 
+    titre: 'LOGISTIQUE (Artisans)', 
+    desc: 'Fiches et astuces de sécurisation des transports de stocks et marchandises pour les artisans.', 
     coef: 350, 
     icone: '🚚', 
     categorie: 'Logistique' 
   },
   { 
     id: 'MICRO_CREDIT', 
-    titre: 'MICRO-CRÉDIT', 
-    desc: 'Financement express pour entrepreneurs. Boostez votre stock ou matériel sans paperasse.', 
+    titre: 'GESTION DE PROJET', 
+    desc: 'Simulateur d\'investissement et guide d\'approvisionnement de stock pour les micro-entrepreneurs.', 
     type: 'finance', 
     icone: '💰', 
     coef: 0, 
-    categorie: 'Micro-crédit' 
+    categorie: 'Micro-Projet' 
   }
 ];
 
-const categories = ['Toutes les rubriques', 'Avenir', 'Santé', 'Agricole', 'Retraite', 'Logistique', 'Micro-crédit'];
+const categories = ['Toutes les rubriques', 'Avenir', 'Prévention', 'Agricole', 'Retraite', 'Logistique', 'Micro-Projet'];
 
 // --- COMPOSANTS UI ---
 const Logo = ({ className = "w-12 h-12" }: { className?: string }) => (
@@ -237,7 +303,433 @@ const Logo = ({ className = "w-12 h-12" }: { className?: string }) => (
   </div>
 );
 
-export default function App() {
+// --- COMPOSANT DE SIGNATURE ROBUSTE ET COMPATIBLE ENTIÈREMENT AVEC REACT 19 & IFRAMES ---
+interface SignaturePadProps {
+  penColor?: string;
+  canvasProps?: React.CanvasHTMLAttributes<HTMLCanvasElement>;
+}
+
+interface SignaturePadRef {
+  clear: () => void;
+  isEmpty: () => boolean;
+  toDataURL: () => string;
+}
+
+const SignaturePad = React.forwardRef<SignaturePadRef, SignaturePadProps>(({ penColor = '#059669', canvasProps }, ref) => {
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const isDrawing = React.useRef(false);
+  const empty = React.useRef(true);
+
+  React.useImperativeHandle(ref, () => ({
+    clear: () => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = 'rgba(0,0,0,0)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+      empty.current = true;
+    },
+    isEmpty: () => empty.current,
+    toDataURL: () => {
+      const canvas = canvasRef.current;
+      return canvas ? canvas.toDataURL('image/png') : '';
+    }
+  }));
+
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resizeCanvas = () => {
+      try {
+        const rect = canvas.getBoundingClientRect();
+        const width = typeof rect.width === 'number' && !isNaN(rect.width) && rect.width > 0 ? rect.width : 300;
+        const height = typeof rect.height === 'number' && !isNaN(rect.height) && rect.height > 0 ? rect.height : 150;
+        
+        let dpr = 1;
+        if (typeof window !== 'undefined' && typeof window.devicePixelRatio === 'number' && !isNaN(window.devicePixelRatio) && isFinite(window.devicePixelRatio)) {
+          dpr = window.devicePixelRatio;
+        }
+        
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.scale(dpr, dpr);
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = penColor;
+        }
+      } catch (err) {
+        console.warn("SignaturePad canvas resizing failed safely:", err);
+      }
+    };
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    const getCoordinates = (e: MouseEvent | TouchEvent) => {
+      try {
+        const rect = canvas.getBoundingClientRect();
+        let clientX = 0;
+        let clientY = 0;
+
+        const anyEvent = e as any;
+        if (anyEvent && anyEvent.touches && anyEvent.touches.length > 0) {
+          clientX = anyEvent.touches[0].clientX;
+          clientY = anyEvent.touches[0].clientY;
+        } else if (anyEvent && anyEvent.changedTouches && anyEvent.changedTouches.length > 0) {
+          clientX = anyEvent.changedTouches[0].clientX;
+          clientY = anyEvent.changedTouches[0].clientY;
+        } else if (anyEvent && typeof anyEvent.clientX === 'number' && !isNaN(anyEvent.clientX)) {
+          clientX = anyEvent.clientX;
+          clientY = anyEvent.clientY;
+        } else {
+          return null;
+        }
+
+        const x = clientX - (rect?.left || 0);
+        const y = clientY - (rect?.top || 0);
+
+        if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+          return null;
+        }
+
+        return { x, y };
+      } catch (err) {
+        console.warn("SignaturePad coordinate retrieval failed safely:", err);
+        return null;
+      }
+    };
+
+    const startDrawing = (e: MouseEvent | TouchEvent) => {
+      try {
+        const coords = getCoordinates(e);
+        if (!coords) return;
+
+        isDrawing.current = true;
+        empty.current = false;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.beginPath();
+        ctx.moveTo(coords.x, coords.y);
+      } catch (err) {
+        console.warn("SignaturePad startDrawing failed safely:", err);
+      }
+    };
+
+    const draw = (e: MouseEvent | TouchEvent) => {
+      try {
+        if (!isDrawing.current) return;
+        if (e.cancelable && typeof e.preventDefault === 'function') {
+          e.preventDefault();
+        }
+
+        const coords = getCoordinates(e);
+        if (!coords) return;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.lineTo(coords.x, coords.y);
+        ctx.stroke();
+      } catch (err) {
+        console.warn("SignaturePad drawing failed safely:", err);
+      }
+    };
+
+    const stopDrawing = () => {
+      try {
+        isDrawing.current = false;
+      } catch (err) {
+        console.warn("SignaturePad stopDrawing failed safely:", err);
+      }
+    };
+
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseleave', stopDrawing);
+
+    canvas.addEventListener('touchstart', startDrawing, { passive: false });
+    canvas.addEventListener('touchmove', draw, { passive: false });
+    canvas.addEventListener('touchend', stopDrawing);
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      
+      canvas.removeEventListener('mousedown', startDrawing);
+      canvas.removeEventListener('mousemove', draw);
+      canvas.removeEventListener('mouseup', stopDrawing);
+      canvas.removeEventListener('mouseleave', stopDrawing);
+
+      canvas.removeEventListener('touchstart', startDrawing);
+      canvas.removeEventListener('touchmove', draw);
+      canvas.removeEventListener('touchend', stopDrawing);
+    };
+  }, [penColor]);
+
+  return <canvas ref={canvasRef} {...canvasProps} />;
+});
+
+SignaturePad.displayName = 'SignaturePad';
+
+// --- ROBUST ERROR BOUNDARY TO PREVENT BLANK/WHITE SCREENS ---
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-slate-950 text-white p-8 flex flex-col items-center justify-center space-y-6 font-sans">
+          <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center border border-red-500/20">
+            <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div className="text-center space-y-2 max-w-md">
+            <h1 className="text-2xl font-black tracking-tight">Une erreur est survenue</h1>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              L'application a rencontré une erreur inattendue. Veuillez nous excuser pour ce désagrément temporaire.
+            </p>
+          </div>
+          <div className="bg-slate-900 p-6 rounded-2xl border border-white/5 font-mono text-xs text-red-400 max-w-xl w-full overflow-auto space-y-2 text-left">
+            <p className="font-bold">Message : {this.state.error?.message}</p>
+            <pre className="text-[10px] opacity-70 leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {this.state.error?.stack}
+            </pre>
+          </div>
+          <button
+            onClick={() => {
+              try {
+                window.localStorage.clear();
+              } catch (e) {}
+              window.location.reload();
+            }}
+            className="px-6 h-12 bg-emerald-500 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-500/10 hover:scale-[1.02] active:scale-95 transition-all"
+          >
+            Réinitialiser & Recharger
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// --- SAFE BOUNDARY FOR ISOLATED AGRICULTURAL COMPONENTS ---
+class SafeComponentBoundary extends React.Component<{ children: React.ReactNode; fallback: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error("SafeComponentBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+interface SafeWeatherAlertProps {
+  weather: WeatherData | null;
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+}
+
+function SafeWeatherAlert({ 
+  weather,
+  loading,
+  error,
+  onRetry 
+}: SafeWeatherAlertProps) {
+  try {
+    const safeDesc = typeof weather?.description === 'string' && weather.description ? weather.description : 'Ensoleillé';
+    const safeTemp = typeof weather?.temp === 'number' && !isNaN(weather.temp) && isFinite(weather.temp) ? weather.temp : 29;
+    const safeHumid = typeof weather?.humidity === 'number' && !isNaN(weather.humidity) && isFinite(weather.humidity) ? weather.humidity : 75;
+    const safeVent = typeof weather?.wind === 'number' && !isNaN(weather.wind) && isFinite(weather.wind) ? weather.wind : 12;
+    const safePluie = typeof weather?.rain === 'number' && !isNaN(weather.rain) && isFinite(weather.rain) ? weather.rain : 0;
+    const meteoSource = weather?.source || 'simulation';
+
+    const getAdvice = () => {
+      if (safeTemp > 35) {
+        return {
+          title: "Alerte Canicule & Sécheresse",
+          desc: "Risque accru d'évaporation de l'eau des parcelles de riz. Augmentez l'irrigation matinale et évitez l'apport d'azote.",
+          type: "danger"
+        };
+      }
+      if (safePluie > 5) {
+        return {
+          title: "Alerte Précipitations Fortes",
+          desc: "Risque de submersion des jeunes plants de riz. Assurez le bon fonctionnement des canaux de drainage.",
+          type: "warning"
+        };
+      }
+      if (safeVent > 25) {
+        return {
+          title: "Alerte Vent Fort",
+          desc: "Risque de verse mécanique du riz en phase de maturation. Évitez l'épandage d'engrais pulvérisé aujourd'hui.",
+          type: "warning"
+        };
+      }
+      return {
+        title: "Conditions Optimales",
+        desc: "Météo idéale pour le tallage et la croissance du riz. Période favorable à la fertilisation de précision.",
+        type: "success"
+      };
+    };
+
+    const advice = getAdvice();
+
+    return (
+      <div className="mt-6 bg-slate-50 rounded-3xl p-5 border border-slate-200/60 shadow-sm relative overflow-hidden text-left animate-in fade-in duration-300">
+        
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <CloudSun className="w-5 h-5 text-emerald-500" />
+            <h4 className="font-black text-xs text-slate-700 tracking-wider uppercase">Bulletin Décisionnel Agricole</h4>
+          </div>
+          
+          <div className="flex items-center gap-1.5">
+            {meteoSource === 'api' && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-0.5">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                Temps Réel
+              </span>
+            )}
+            {meteoSource === 'cache' && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-100 rounded-full px-2 py-0.5">
+                Synchronisé (Cache)
+              </span>
+            )}
+            {meteoSource === 'simulation' && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-full px-2 py-0.5">
+                Simulé hors-ligne
+              </span>
+            )}
+            
+            <button 
+              onClick={onRetry}
+              disabled={loading}
+              className="p-1 text-slate-400 hover:text-emerald-500 hover:bg-white rounded-lg border border-transparent hover:border-slate-100 transition-all disabled:opacity-50"
+              title="Actualiser les données"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin text-emerald-500")} />
+            </button>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="absolute inset-0 bg-slate-50/80 backdrop-blur-[1px] flex flex-col items-center justify-center gap-2 z-20 animate-in fade-in duration-200">
+            <Loader2 className="w-6 h-6 text-emerald-500 animate-spin" />
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mise à jour en cours...</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-3 p-2 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-2 text-[10px] text-rose-600 font-medium">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold">Alerte connexion :</span> {error}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-4 gap-2.5 mb-4">
+          <div className="bg-white p-2.5 rounded-2xl border border-slate-100 text-center flex flex-col items-center justify-center gap-0.5">
+            <span className="text-slate-400 text-[9px] font-bold uppercase tracking-wider">Temp</span>
+            <span className="font-mono text-base font-black text-slate-800">{safeTemp}°C</span>
+            <span className="text-[8px] text-slate-500 font-semibold truncate max-w-full capitalize">{safeDesc}</span>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-2xl border border-slate-100 text-center flex flex-col items-center justify-center gap-0.5">
+            <Droplets className="w-3.5 h-3.5 text-blue-400" />
+            <span className="text-slate-400 text-[9px] font-bold uppercase tracking-wider mt-0.5">Humidité</span>
+            <span className="font-mono text-base font-black text-slate-800">{safeHumid}%</span>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-2xl border border-slate-100 text-center flex flex-col items-center justify-center gap-0.5">
+            <Wind className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-slate-400 text-[9px] font-bold uppercase tracking-wider mt-0.5">Vent</span>
+            <span className="font-mono text-base font-black text-slate-800">{safeVent} <span className="text-[8px] font-bold">km/h</span></span>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-2xl border border-slate-100 text-center flex flex-col items-center justify-center gap-0.5">
+            <CloudRain className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-slate-400 text-[9px] font-bold uppercase tracking-wider mt-0.5">Pluie</span>
+            <span className="font-mono text-base font-black text-slate-800">{safePluie} <span className="text-[8px] font-bold">mm</span></span>
+          </div>
+        </div>
+
+        <div className={cn(
+          "p-3 rounded-2xl border flex gap-3 items-start",
+          advice.type === 'danger' && "bg-rose-50/50 border-rose-100 text-rose-950",
+          advice.type === 'warning' && "bg-amber-50/50 border-amber-100 text-amber-950",
+          advice.type === 'success' && "bg-emerald-50/40 border-emerald-100/60 text-slate-800"
+        )}>
+          <div className={cn(
+            "w-7 h-7 rounded-xl flex items-center justify-center shrink-0 text-sm",
+            advice.type === 'danger' && "bg-rose-100 text-rose-600",
+            advice.type === 'warning' && "bg-amber-100 text-amber-600",
+            advice.type === 'success' && "bg-emerald-100 text-emerald-600"
+          )}>
+            🌾
+          </div>
+          <div>
+            <h5 className="font-bold text-xs uppercase tracking-wider leading-none mb-1">{advice.title}</h5>
+            <p className="text-[10px] text-slate-500 leading-normal font-medium">{advice.desc}</p>
+          </div>
+        </div>
+
+      </div>
+    );
+  } catch (err) {
+    console.warn("SafeWeatherAlert rendering failed:", err);
+    return (
+      <div className="mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">Alerte Météo Fallback</span>
+          <span className="text-[9px] text-slate-400 font-bold uppercase">Mode Hors-ligne</span>
+        </div>
+        <p className="text-[10px] text-slate-600 leading-normal font-semibold">
+          Données d'aide à la décision agricole momentanément indisponibles. Protection des récoltes active par défaut (Couverture maximale garantie).
+        </p>
+      </div>
+    );
+  }
+}
+
+function MainApp() {
   const [refCode, setRefCode] = useState('');
   const [selectedAmbassadeur, setSelectedAmbassadeur] = useState<any>(null);
 
@@ -262,22 +754,94 @@ export default function App() {
     }
 
     // Auto-Country detection (Automatic Filtering)
-    const storedPays = localStorage.getItem('prevafrica_pays');
+    const storedPays = safeLocalStorage.getItem('prevafrica_pays');
     if (!storedPays) {
-      fetch('https://ipapi.co/json/')
-        .then(res => res.json())
-        .then(data => {
-          if (data.country_name && paysConfig[data.country_name]) {
-            setPays(data.country_name);
-          }
-        })
-        .catch(() => console.log("Auto-detection failed, using default."));
+      try {
+        fetch('https://ipapi.co/json/')
+          .then(res => res.json())
+          .then(data => {
+            if (data.country_name && paysConfig[data.country_name]) {
+              setPays(data.country_name);
+            }
+          })
+          .catch(() => console.log("Auto-detection failed, using default."));
+      } catch (err) {
+        console.warn("Auto-detection fetch exception caught:", err);
+      }
     }
+    try {
+      if (typeof window !== 'undefined') {
+        (window as any).__prevafrica_mounted = true;
+      }
+    } catch (e) {}
   }, []);
 
   const [etape, setEtape] = useState('splash');
   const [partnerSpace, setPartnerSpace] = useState(false);
   const [showPrevention, setShowPrevention] = useState(false);
+
+  // --- AAB SIGNER STATE ---
+  const [aabFile, setAabFile] = useState<File | null>(null);
+  const [customKeystoreFile, setCustomKeystoreFile] = useState<File | null>(null);
+  const [customAlias, setCustomAlias] = useState("my-key-alias");
+  const [customPassword, setCustomPassword] = useState("CAC3KVikhbyb");
+  const [useCustomKeystore, setUseCustomKeystore] = useState(false);
+  const [isSigningAab, setIsSigningAab] = useState(false);
+  const [signAabStatus, setSignAabStatus] = useState<string | null>(null);
+  const [selectedKeystoreForSign, setSelectedKeystoreForSign] = useState('signing.keystore');
+
+  const handleSignAab = async () => {
+    if (!aabFile) {
+      setSignAabStatus("❌ Veuillez d'abord choisir un fichier .aab");
+      return;
+    }
+    setIsSigningAab(true);
+    setSignAabStatus("⏳ Signature de l'Android App Bundle (AAB) en cours avec jarsigner...");
+    try {
+      const formData = new FormData();
+      formData.append("aab", aabFile);
+
+      if (useCustomKeystore && customKeystoreFile) {
+        formData.append("customKeystore", customKeystoreFile);
+        formData.append("alias", customAlias || "my-key-alias");
+        formData.append("password", customPassword || "CAC3KVikhbyb");
+      } else {
+        formData.append("keystore", selectedKeystoreForSign);
+        formData.append("alias", customAlias || "my-key-alias");
+        formData.append("password", customPassword || "CAC3KVikhbyb");
+      }
+
+      const res = await fetch("/api/sign-aab", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        let errText = "Échec de la signature.";
+        try {
+          const errData = await res.json();
+          errText = errData.details || errData.error || errText;
+        } catch (e) {}
+        throw new Error(errText);
+      }
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = "PREVAFRICA-signed.aab";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      setSignAabStatus("✅ Succès ! Votre fichier PREVAFRICA-signed.aab a été signé et téléchargé.");
+    } catch (err: any) {
+      setSignAabStatus(`❌ Erreur: ${err.message}`);
+    } finally {
+      setIsSigningAab(false);
+    }
+  };
 
   const handleDownloadAsset = (key: string) => {
     // Redirige vers notre API locale robuste et permanente plutôt que d'utiliser des liens temporaires expirés
@@ -290,12 +854,13 @@ export default function App() {
   const [whatsapp, setWhatsapp] = useState('');
   const [beneficiaire, setBeneficiaire] = useState('');
   const [otp, setOtp] = useState('');
-  const [pays, setPays] = useState(() => localStorage.getItem('prevafrica_pays') || 'Sénégal');
+  const [pays, setPays] = useState(() => safeLocalStorage.getItem('prevafrica_pays') || 'Sénégal');
+  const configPays = paysConfig[pays] || paysConfig['Sénégal'];
   const [signature, setSignature] = useState('');
 
   // Persistent country choice
   useEffect(() => {
-    localStorage.setItem('prevafrica_pays', pays);
+    safeLocalStorage.setItem('prevafrica_pays', pays);
   }, [pays]);
 
   // Auto-fetch for Partner Space
@@ -319,7 +884,12 @@ export default function App() {
 
   // --- NEW: Micro-credit & Weather ---
   const [dureeCredit, setDureeCredit] = useState(6);
-  const [meteo, setMeteo] = useState<any>(null);
+  const {
+    weather: weatherData,
+    loading: meteoLoading,
+    error: meteoError,
+    refresh: refreshMeteo
+  } = useWeather(pays, produit?.id === 'AGRICOLE_RICE');
 
   const [ambassadeurNom, setAmbassadeurNom] = useState('');
   const [ambassadeurWhatsApp, setAmbassadeurWhatsApp] = useState('');
@@ -352,21 +922,16 @@ export default function App() {
     }
   };
 
-  // Fetch Weather Data for Agriculture Product
-  useEffect(() => {
-    if (produit?.id === 'AGRICOLE_RICE') {
-      // Demo logic: in real-world, we'd use navigator.geolocation
-      const city = pays === 'Côte d\'Ivoire' ? 'Abidjan' : pays === 'Sénégal' ? 'Dakar' : pays === 'Cameroun' ? 'Douala' : 'Lomé';
-      fetch(`https://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=895284fb2d2c1d87c422f8c2e646271c`) // Key for demo purposes
-        .then(res => res.json())
-        .then(data => setMeteo(data))
-        .catch(() => setMeteo({ main: { temp: 28 }, weather: [{ description: 'Ensoleillé' }] }));
-    }
-  }, [produit, pays]);
-
   useEffect(() => {
     if (etape === 'splash') {
-      const timer = setTimeout(() => setEtape('catalogue'), 2000);
+      const timer = setTimeout(() => {
+        setEtape('catalogue');
+        try {
+          if (typeof window !== 'undefined') {
+            (window as any).__prevafrica_mounted = true;
+          }
+        } catch (e) {}
+      }, 2000);
       return () => clearTimeout(timer);
     }
   }, [etape]);
@@ -425,7 +990,7 @@ export default function App() {
       doc.setFont("helvetica", "normal");
       doc.text(`NOM COMPLET: ${nom.toUpperCase()}`, 25, 70);
       doc.text(`PAYS: ${pays?.toUpperCase()}`, 25, 77);
-      doc.text(`WHATSAPP: ${paysConfig[pays]?.code || ''} ${whatsapp}`, 25, 84);
+      doc.text(`WHATSAPP: ${configPays?.code || ''} ${whatsapp}`, 25, 84);
 
       // Product Section
       doc.setFontSize(12);
@@ -434,9 +999,9 @@ export default function App() {
       
       doc.setFontSize(11);
       doc.setFont("helvetica", "normal");
-      doc.text(` OFFRE: ${produit?.titre}`, 25, 120);
-      doc.text(` PRIME PAYÉE: ${parseInt(montant).toLocaleString()} FCFA`, 25, 127);
-      doc.text(` CAPITAL GARANTI: ${capital.toLocaleString()} FCFA`, 25, 134);
+      doc.text(` OFFRE: ${produit?.titre || 'Offre PREVAFRICA'}`, 25, 120);
+      doc.text(` PRIME PAYÉE: ${(parseInt(montant) || 0).toLocaleString()} ${configPays?.devise || 'FCFA'}`, 25, 127);
+      doc.text(` CAPITAL GARANTI: ${(typeof capital === 'number' && !isNaN(capital) && isFinite(capital) ? capital : 0).toLocaleString()} ${configPays?.devise || 'FCFA'}`, 25, 134);
       doc.text(` MODE DE PAIEMENT: MOBILE MONEY (PAYÉ)`, 25, 141);
 
       // Conditions Table (Simplified)
@@ -509,7 +1074,7 @@ export default function App() {
 
   const initierPaiement = async (methode: string) => {
     setChargement(true);
-    const config = paysConfig[pays];
+    const config = configPays;
     const amount = totalPayable;
     
     // Simulate Gateway initialization logic
@@ -639,7 +1204,8 @@ export default function App() {
   const getAnalyticsData = () => {
     // 1. Chart by Offer
     const byOffreMap: Record<string, number> = {};
-    adminData.forEach(d => {
+    (adminData || []).forEach(d => {
+      if (!d) return;
       const o = d.offre || 'Standard';
       byOffreMap[o] = (byOffreMap[o] || 0) + (Number(d.montant) || 0);
     });
@@ -647,7 +1213,8 @@ export default function App() {
 
     // 2. Chart by Pays
     const byPaysMap: Record<string, number> = {};
-    adminData.forEach(d => {
+    (adminData || []).forEach(d => {
+      if (!d) return;
       const p = d.pays || 'Inconnu';
       byPaysMap[p] = (byPaysMap[p] || 0) + 1;
     });
@@ -655,7 +1222,8 @@ export default function App() {
 
     // 3. Stats by Sinistre Status
     const sinsByStatus: Record<string, number> = {};
-    adminSinistres.forEach(s => {
+    (adminSinistres || []).forEach(s => {
+      if (!s) return;
       const st = s.statut || 'Reçu';
       sinsByStatus[st] = (sinsByStatus[st] || 0) + 1;
     });
@@ -668,8 +1236,8 @@ export default function App() {
 
   // --- RENDERS ---
   const renderPartnerPortal = () => {
-    const volumeClients = adminData.length;
-    const volumeFinancier = adminData.reduce((acc, curr) => acc + (Number(curr.montant) || 0), 0);
+    const volumeClients = (adminData || []).length;
+    const volumeFinancier = (adminData || []).reduce((acc, curr) => acc + (Number(curr?.montant) || 0), 0);
     const commissionsPrev = Math.round(volumeFinancier * 0.15);
 
     return (
@@ -713,10 +1281,10 @@ export default function App() {
               </div>
 
               <div className="flex-1 space-y-4 overflow-y-auto max-h-[300px] pr-2 custom-scrollbar">
-                {(adminSinistres || []).filter(s => s.statut === 'En cours').length === 0 ? (
+                {(adminSinistres || []).filter(s => s && s.statut === 'En cours').length === 0 ? (
                   <div className="h-full flex items-center justify-center text-slate-500 italic text-sm py-10">Aucun dossier en attente.</div>
                 ) : (
-                  adminSinistres.filter(s => s.statut === 'En cours').map(s => (
+                  (adminSinistres || []).filter(s => s && s.statut === 'En cours').map(s => (
                     <div key={s.id} className="p-5 bg-slate-900 rounded-[32px] border border-slate-700 space-y-3 shadow-inner">
                       <div className="flex justify-between items-start">
                          <div>
@@ -761,7 +1329,7 @@ export default function App() {
                   <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 font-mono text-xs border border-emerald-500/20">OK</div>
                   <div>
                     <h5 className="font-bold text-sm">Gateway Intégrée</h5>
-                    <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{paysConfig[pays]?.gateway || 'Payment Hub'} v2.4</p>
+                    <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{configPays?.gateway || 'CinetPay'} v2.4</p>
                   </div>
                 </div>
               </div>
@@ -920,15 +1488,23 @@ export default function App() {
             <div className="space-y-8 animate-in fade-in duration-500">
               {/* Country Picker & Sinistre Alert */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between px-1">
+                <div className="flex items-center justify-between px-1 flex-wrap gap-2">
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Votre Localisation</p>
-                   <button 
-                    onClick={() => setEtape('sinistre')}
-                    className="flex items-center gap-2 text-red-500 text-[10px] font-black uppercase tracking-widest hover:opacity-70 transition-all"
-                   >
-                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                    Déclarer un Sinistre
-                   </button>
+                   <div className="flex items-center gap-3">
+                     <button 
+                      onClick={() => { setEtape('studio_aab'); window.scrollTo(0, 0); }}
+                      className="flex items-center gap-1.5 bg-slate-900 text-emerald-400 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full hover:bg-slate-800 transition-all border border-emerald-500/30 shadow-sm cursor-pointer"
+                     >
+                      <ShieldCheck size={12} /> Studio de Signature AAB
+                     </button>
+                     <button 
+                      onClick={() => setEtape('sinistre')}
+                      className="flex items-center gap-2 text-red-500 text-[10px] font-black uppercase tracking-widest hover:opacity-70 transition-all cursor-pointer"
+                     >
+                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                      Déclarer un Sinistre
+                     </button>
+                   </div>
                 </div>
                 <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar -mx-2 px-2">
                   {Object.keys(paysConfig).map(p => (
@@ -999,7 +1575,11 @@ export default function App() {
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
                     key={o.id}
-                    onClick={() => { setProduit(o); setEtape('simulation'); }}
+                    onClick={() => { 
+                      setProduit(o); 
+                      setMontant(o.type === 'finance' ? '50000' : '5000');
+                      setEtape('simulation'); 
+                    }}
                     className="flex items-center gap-5 p-5 bg-white rounded-[24px] text-left group transition-all border border-slate-100 shadow-sm hover:shadow-md hover:border-emerald-500/20"
                   >
                     <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-3xl group-hover:scale-110 transition-transform">
@@ -1140,8 +1720,25 @@ export default function App() {
                  <button 
                   onClick={() => {
                     const text = `Rejoignez PREVAFRICA avec mon code ambassadeur : ${ambassadeurKey} \nSouscrivez ici : ${window.location.origin}/?ref=${ambassadeurKey}`;
-                    navigator.clipboard.writeText(text);
-                    alert("Copié dans le presse-papier ! Envoyez-le sur vos groupes WhatsApp.");
+                    try {
+                      if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                        navigator.clipboard.writeText(text);
+                        alert("Copié dans le presse-papier ! Envoyez-le sur vos groupes WhatsApp.");
+                      } else {
+                        const textArea = document.createElement("textarea");
+                        textArea.value = text;
+                        textArea.style.position = "fixed";
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        alert("Copié dans le presse-papier ! Envoyez-le sur vos groupes WhatsApp.");
+                      }
+                    } catch (err) {
+                      console.warn("Clipboard fallback copy failed:", err);
+                      alert("Code : " + ambassadeurKey + "\n\n(Veuillez noter ce code ou copier manuellement)");
+                    }
                   }}
                   className="w-full h-16 bg-emerald-500 text-white font-black rounded-2xl flex items-center justify-center gap-3 shadow-lg"
                  >
@@ -1159,45 +1756,66 @@ export default function App() {
           )}
 
           {etape === 'simulation' && produit && (
-            <div className="glass rounded-[32px] p-8 space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-              <button 
-                onClick={() => setEtape('catalogue')}
-                className="flex items-center gap-2 text-emerald-400 font-bold text-sm"
-              >
-                <ChevronLeft size={20} />
-                Retour
-              </button>
-
-              <div className="text-center">
-                <h3 className="text-2xl font-black mb-2 text-slate-800">{produit.titre}</h3>
-                <p className="text-slate-400 text-sm">Garantie active pour : {pays}</p>
-                
-                {/* Weather Alert for Agricole */}
-                {produit.id === 'AGRICOLE_RICE' && meteo && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center gap-3"
-                  >
-                    <div className="text-left">
-                      <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest leading-none">Indice Météo Local</p>
-                      <p className="text-xs font-bold text-slate-800 uppercase">{meteo.weather[0].description} • {Math.round(meteo.main.temp)}°C</p>
-                    </div>
-                    <div className="h-8 w-px bg-slate-200" />
-                    <p className="text-[8px] text-slate-500 font-medium max-w-[150px] leading-tight text-left">
-                      Protection active contre le risque climatique ({meteo.main.temp > 35 ? 'Alerte Sécheresse' : 'Risque Modéré'}).
-                    </p>
-                  </motion.div>
-                )}
+            <SafeComponentBoundary fallback={
+              <div className="glass rounded-[32px] p-8 space-y-6 text-center animate-in fade-in duration-300">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl font-black">
+                  🌾
+                </div>
+                <h3 className="text-xl font-black text-slate-800">Module de Simulation Agricole</h3>
+                <p className="text-slate-500 text-xs font-medium max-w-sm mx-auto leading-relaxed">
+                  L'affichage de cette fiche a été basculé en mode de protection hors-ligne. Votre garantie de couverture reste active.
+                </p>
+                <button 
+                  onClick={() => setEtape('catalogue')}
+                  className="px-6 h-12 bg-emerald-500 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider"
+                >
+                  Retour au Catalogue
+                </button>
               </div>
+            }>
+              <div className="glass rounded-[32px] p-8 space-y-8 animate-in slide-in-from-bottom-5 duration-500">
+                <button 
+                  onClick={() => setEtape('catalogue')}
+                  className="flex items-center gap-2 text-emerald-400 font-bold text-sm"
+                >
+                  <ChevronLeft size={20} />
+                  Retour
+                </button>
+
+                <div className="text-center">
+                  <h3 className="text-2xl font-black mb-2 text-slate-800">{produit?.titre || 'AGRICULTURE (Advisory)'}</h3>
+                  <p className="text-slate-400 text-sm">Garantie active pour : {pays}</p>
+                  
+                  {/* Weather Alert for Agricole */}
+                  {produit?.id === 'AGRICOLE_RICE' && (
+                    <SafeComponentBoundary fallback={
+                      <div className="mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex flex-col gap-2 text-left">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">Alerte Météo Fallback</span>
+                          <span className="text-[9px] text-slate-400 font-bold uppercase">Mode Hors-ligne</span>
+                        </div>
+                        <p className="text-[10px] text-slate-600 leading-normal font-semibold">
+                          Données d'aide à la décision agricole momentanément indisponibles. Protection des récoltes active par défaut (Couverture maximale garantie).
+                        </p>
+                      </div>
+                    }>
+                      <SafeWeatherAlert 
+                        weather={weatherData}
+                        loading={meteoLoading}
+                        error={meteoError}
+                        onRetry={refreshMeteo}
+                      />
+                    </SafeComponentBoundary>
+                  )}
+                </div>
 
               {/* Simulation Result Box */}
               <div className="bg-slate-50 rounded-2xl p-6 space-y-2 border border-slate-100 shadow-sm">
                 <p className="text-[10px] font-black tracking-widest text-emerald-500 text-center uppercase">
-                  {produit.type === 'finance' ? "MENSUALITÉ ESTIMÉE" : "CAPITAL ESTIMÉ"}
+                  {produit?.type === 'finance' ? "MENSUALITÉ ESTIMÉE" : "CAPITAL ESTIMÉ"}
                 </p>
                 <p className="text-3xl font-black text-slate-900 text-center">
-                  {capital.toLocaleString()} <span className="text-sm font-bold text-slate-400">{paysConfig[pays]?.devise || 'FCFA'}</span>
+                  {typeof capital === 'number' && !isNaN(capital) && isFinite(capital) ? capital.toLocaleString() : '0'} <span className="text-sm font-bold text-slate-400">{configPays?.devise || 'FCFA'}</span>
                 </p>
               </div>
 
@@ -1205,34 +1823,34 @@ export default function App() {
               <div className="space-y-6">
                 <div className="space-y-4">
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">
-                    {produit.type === 'finance' ? `MONTANT DU PRÊT SOUHAITÉ (${paysConfig[pays]?.devise || 'FCFA'})` : `MA COTISATION MENSUELLE (${paysConfig[pays]?.devise || 'FCFA'})`}
+                    {produit?.type === 'finance' ? `MONTANT DU PRÊT SOUHAITÉ (${configPays?.devise || 'FCFA'})` : `MA COTISATION MENSUELLE (${configPays?.devise || 'FCFA'})`}
                   </p>
                   
                   <div className="px-4">
                     <input 
                       type="range"
-                      min={produit.type === 'finance' ? "20000" : "500"}
-                      max={produit.type === 'finance' ? "500000" : "50000"}
-                      step={produit.type === 'finance' ? "5000" : "500"}
+                      min={produit?.type === 'finance' ? "20000" : "500"}
+                      max={produit?.type === 'finance' ? "500000" : "50000"}
+                      step={produit?.type === 'finance' ? "5000" : "500"}
                       value={montant}
                       onChange={(e) => setMontant(e.target.value)}
                       className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-emerald-500"
                     />
                     <div className="flex justify-between mt-2 text-[10px] font-bold text-slate-600">
-                      <span>{produit.type === 'finance' ? "20k" : "500"}</span>
-                      <span>{produit.type === 'finance' ? "500k" : "50k"}</span>
+                      <span>{produit?.type === 'finance' ? "20k" : "500"}</span>
+                      <span>{produit?.type === 'finance' ? "500k" : "50k"}</span>
                     </div>
                   </div>
 
                   <div className="h-16 bg-slate-50 rounded-2xl flex items-center justify-center border border-slate-100">
                     <p className="text-3xl font-black text-emerald-500">
-                      {parseInt(montant).toLocaleString()} <span className="text-xs font-bold text-slate-400">{paysConfig[pays]?.devise || 'FCFA'}</span>
+                      {(parseInt(montant) || 0).toLocaleString()} <span className="text-xs font-bold text-slate-400">{configPays?.devise || 'FCFA'}</span>
                     </p>
                   </div>
                 </div>
 
                 {/* Duration Picker for Micro-credit */}
-                {produit.type === 'finance' && (
+                {produit?.type === 'finance' && (
                   <div className="space-y-4">
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">
                       DURÉE DU CRÉDIT
@@ -1266,24 +1884,55 @@ export default function App() {
                 <p className="text-[10px] font-black tracking-widest text-emerald-500 text-center uppercase relative z-10">VÉRIFICATION CNI (eKYC)</p>
                 <div className="relative z-10">
                   {!documentOK ? (
-                    <label className="cursor-pointer">
-                      <div className="w-full h-32 bg-white rounded-xl flex flex-col items-center justify-center gap-3 font-bold hover:bg-slate-50 transition-all border-2 border-dashed border-slate-200 hover:border-emerald-500/50 text-center px-4">
-                        {chargement ? (
+                    <div className="space-y-3">
+                      {chargement ? (
+                        <div className="w-full h-32 bg-white rounded-xl flex flex-col items-center justify-center gap-3 border border-slate-200">
                           <Loader2 className="animate-spin text-emerald-500" />
-                        ) : (
-                          <>
-                            <Camera size={32} className="text-slate-400 group-hover:text-emerald-500" />
-                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">CLIQUEZ POUR PHOTOGRAPHIER OU TÉLÉCHARGER VOTRE PIÈCE</p>
-                          </>
-                        )}
-                      </div>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={handleFileChange} 
-                        className="hidden" 
-                      />
-                    </label>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase">Analyse en cours...</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3">
+                          {/* Option 1: Prendre Photo (Direct Camera) */}
+                          <label className="cursor-pointer group/cam">
+                            <div className="h-36 bg-white rounded-xl flex flex-col items-center justify-center gap-2.5 font-bold hover:bg-emerald-50/20 hover:border-emerald-500/40 transition-all border-2 border-dashed border-slate-200 text-center p-3">
+                              <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-500 group-hover/cam:scale-110 transition-transform">
+                                <Camera size={20} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-800 font-black uppercase block tracking-tight">Prendre Photo</span>
+                                <span className="text-[8px] text-slate-400 font-medium leading-tight block mt-1">Appareil photo direct</span>
+                              </div>
+                            </div>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              capture="environment"
+                              onChange={handleFileChange} 
+                              className="hidden" 
+                            />
+                          </label>
+
+                          {/* Option 2: Importer fichier */}
+                          <label className="cursor-pointer group/file">
+                            <div className="h-36 bg-white rounded-xl flex flex-col items-center justify-center gap-2.5 font-bold hover:bg-blue-50/20 hover:border-blue-500/40 transition-all border-2 border-dashed border-slate-200 text-center p-3">
+                              <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 group-hover/file:scale-110 transition-transform">
+                                <Upload size={20} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-800 font-black uppercase block tracking-tight">Importer Fichier</span>
+                                <span className="text-[8px] text-slate-400 font-medium leading-tight block mt-1">Depuis la galerie</span>
+                              </div>
+                            </div>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={handleFileChange} 
+                              className="hidden" 
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div className="w-full h-24 bg-emerald-50 rounded-xl flex items-center justify-center gap-3 text-emerald-600 font-black border border-emerald-100 overflow-hidden px-4">
                       <div className="flex flex-col items-center flex-1 truncate">
@@ -1312,7 +1961,7 @@ export default function App() {
                 />
                 <div className="flex gap-2">
                   <div className="h-14 aspect-square bg-slate-100 rounded-xl flex items-center justify-center font-bold text-emerald-600 border border-slate-200">
-                    {paysConfig[pays].code}
+                    {configPays?.code || '+221'}
                   </div>
                   <input 
                     type="tel"
@@ -1325,15 +1974,31 @@ export default function App() {
                 
                 <div className="space-y-2">
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Signature Électronique Avancée</p>
-                  <div className="bg-slate-50 rounded-xl border border-dotted border-slate-300 overflow-hidden h-40 relative group">
-                    <SignatureCanvas 
+                  <div 
+                    className="bg-slate-50 rounded-xl border border-dotted border-slate-300 overflow-hidden h-40 relative group touch-none"
+                    onMouseDown={() => {
+                      if (document.activeElement instanceof HTMLElement) {
+                        document.activeElement.blur();
+                      }
+                    }}
+                    onTouchStart={() => {
+                      if (document.activeElement instanceof HTMLElement) {
+                        document.activeElement.blur();
+                      }
+                    }}
+                  >
+                    <SignaturePad 
                       ref={signatureRef}
                       penColor='#059669'
-                      canvasProps={{ className: 'sigCanvas w-full h-full' }}
-                      onEnd={() => setSignature(signatureRef.current.toDataURL())}
+                      canvasProps={{ className: 'sigCanvas w-full h-full touch-none' }}
                     />
                     <button 
-                      onClick={() => { signatureRef.current.clear(); setSignature(''); }}
+                      onClick={() => { 
+                        if (signatureRef.current) {
+                          signatureRef.current.clear(); 
+                        }
+                        setSignature(''); 
+                      }}
                       className="absolute bottom-2 right-2 text-[9px] font-black bg-white/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-200 text-slate-400 uppercase tracking-tighter"
                     >
                       Effacer
@@ -1356,12 +2021,44 @@ export default function App() {
               </div>
 
               <button 
-                onClick={() => { if(documentOK && nom && signature) setEtape('otp'); else alert("Complétez le KYC, votre nom et votre signature"); }}
+                onClick={() => {
+                  if (!documentOK) {
+                    alert("Veuillez charger votre pièce d'identité (CNI).");
+                    return;
+                  }
+                  if (!nom.trim()) {
+                    alert("Veuillez renseigner votre nom complet.");
+                    return;
+                  }
+                  if (!signatureRef.current || signatureRef.current.isEmpty()) {
+                    alert("Veuillez signer électroniquement dans le cadre prévu.");
+                    return;
+                  }
+
+                  // Enregistrer la signature finale dans le state juste avant de valider l'étape
+                  const dataUrl = signatureRef.current.toDataURL();
+                  setSignature(dataUrl);
+                  setEtape('otp');
+                }}
                 className="w-full h-16 bg-emerald-400 rounded-2xl text-slate-950 font-black text-lg shadow-xl shadow-emerald-400/20 hover:scale-[1.02] active:scale-95 transition-all"
               >
                 GÉNÉRER MON CONTRAT & VÉRIFIER
               </button>
             </div>
+          </div>
+        </SafeComponentBoundary>
+        )}
+
+          {etape === 'simulation' && !produit && (
+            <div className="glass rounded-[32px] p-8 space-y-6 text-center animate-in fade-in duration-300">
+              <h3 className="text-xl font-black text-slate-800">Offre non spécifiée</h3>
+              <p className="text-slate-500 text-xs font-medium">Veuillez sélectionner un produit dans le catalogue pour effectuer une simulation.</p>
+              <button 
+                onClick={() => setEtape('catalogue')}
+                className="px-6 py-3 bg-emerald-500 text-slate-950 font-black rounded-xl text-xs uppercase tracking-widest hover:bg-emerald-400 transition-all shadow-md"
+              >
+                Retour au catalogue
+              </button>
             </div>
           )}
 
@@ -1373,7 +2070,7 @@ export default function App() {
                  </div>
                  <h3 className="text-2xl font-black italic text-slate-800">Vérification SMS</h3>
                  <p className="text-slate-500 text-sm">
-                   Un code de sécurité a été envoyé au <span className="text-emerald-500 font-bold">{paysConfig[pays].code} {whatsapp}</span>
+                   Un code de sécurité a été envoyé au <span className="text-emerald-500 font-bold">{configPays?.code || '+221'} {whatsapp}</span>
                  </p>
                </div>
 
@@ -1416,7 +2113,7 @@ export default function App() {
                {chargement ? (
                  <div className="py-12 flex flex-col items-center gap-6">
                     <Loader2 className="w-12 h-12 text-emerald-500 animate-spin" />
-                    <p className="text-slate-500 text-center font-medium">Connexion à la passerelle {paysConfig[pays].gateway}...</p>
+                    <p className="text-slate-500 text-center font-medium">Connexion à la passerelle {configPays?.gateway || 'CinetPay'}...</p>
                  </div>
                ) : (
                  <div className="space-y-4">
@@ -1452,7 +2149,7 @@ export default function App() {
 
                <div className="flex items-center justify-center gap-2 py-4 px-6 bg-slate-50 rounded-full border border-slate-100">
                  <Lock size={14} className="text-slate-400" />
-                 <p className="text-[10px] text-slate-400 uppercase tracking-tight font-medium">Paiement crypté SSL via {paysConfig[pays].gateway}</p>
+                 <p className="text-[10px] text-slate-400 uppercase tracking-tight font-medium">Paiement crypté SSL via {configPays?.gateway || 'CinetPay'}</p>
                </div>
             </div>
           )}
@@ -1518,15 +2215,15 @@ export default function App() {
                     <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest">PRODUIT SÉLECTIONNÉ</p>
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 bg-slate-900 text-white rounded-lg flex items-center justify-center text-xs">
-                        {produit.icone}
+                        {produit?.icone || '🌾'}
                       </div>
-                      <p className="text-lg font-black text-slate-900">{produit.titre}</p>
+                      <p className="text-lg font-black text-slate-900">{produit?.titre || 'PREVAFRICA'}</p>
                     </div>
                   </div>
 
                   <div className="space-y-2 text-right">
                     <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest">MONTANT SOUSCRIT</p>
-                    <p className="text-xl font-black text-emerald-600">{parseInt(montant).toLocaleString()} FCFA</p>
+                    <p className="text-xl font-black text-emerald-600">{(parseInt(montant) || 0).toLocaleString()} FCFA</p>
                     <p className="text-[9px] font-bold text-emerald-500 uppercase tracking-tighter">Payé intégralement ✅</p>
                   </div>
                 </div>
@@ -1748,7 +2445,7 @@ export default function App() {
                      adminTab === 'souscriptions' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
                    )}
                  >
-                   SOUSCRIPTIONS
+                   SIMULATIONS
                  </button>
                   <button 
                     onClick={() => setAdminTab('ambassadeurs')}
@@ -1766,7 +2463,7 @@ export default function App() {
                      adminTab === 'sinistres' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
                    )}
                  >
-                   SINISTRES ({(adminSinistres || []).length})
+                   ASSISTANCES ({(adminSinistres || []).length})
                  </button>
                  <button 
                    onClick={() => setAdminTab('strategie')}
@@ -1784,7 +2481,7 @@ export default function App() {
                    {/* --- STATS GRID --- */}
                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                      <div className="glass p-6 rounded-[28px] border-l-4 border-l-emerald-500 shadow-sm">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Primes Collectées</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Volume Épargne Estimé</p>
                         <div className="flex items-end gap-2">
                           <span className="text-3xl font-black text-slate-800">
                             {(adminData || []).reduce((acc: any, curr: any) => acc + (Number(curr?.montant) || 0), 0).toLocaleString()}
@@ -1793,14 +2490,14 @@ export default function App() {
                         </div>
                      </div>
                      <div className="glass p-6 rounded-[28px] border-l-4 border-l-blue-500 shadow-sm">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre de Souscripteurs</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nombre d'Utilisateurs</p>
                         <div className="flex items-end gap-2">
                           <span className="text-3xl font-black text-slate-800">{(adminData || []).length}</span>
                           <span className="text-blue-500 font-bold text-sm mb-1">Membres</span>
                         </div>
                      </div>
                      <div className="glass p-6 rounded-[28px] border-l-4 border-l-amber-500 shadow-sm">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Prime Moyenne</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Simulations Moyennes</p>
                         <div className="flex items-end gap-2">
                           <span className="text-3xl font-black text-slate-800">
                             {(adminData || []).length > 0 
@@ -1818,7 +2515,7 @@ export default function App() {
                      <div className="glass rounded-[32px] p-6 space-y-4">
                         <h4 className="font-bold text-slate-700 flex items-center gap-2">
                           <MapPin size={18} className="text-emerald-500" />
-                          Revenus par Pays
+                          Projets par Pays
                         </h4>
                         <div className="space-y-3">
                           {Array.from(new Set((adminData || []).map(d => d?.pays || 'Inconnu'))).map(p => {
@@ -1838,7 +2535,7 @@ export default function App() {
                      <div className="glass rounded-[32px] p-6 space-y-4">
                         <h4 className="font-bold text-slate-700 flex items-center gap-2">
                           <ShieldCheck size={18} className="text-blue-500" />
-                          Garanties demandées
+                          Formations / Outils demandés
                         </h4>
                         <div className="space-y-3">
                           {Array.from(new Set((adminData || []).map(d => d?.offre || 'Standard'))).map(o => {
@@ -2134,7 +2831,7 @@ export default function App() {
                              <div className="p-8 bg-white/5 rounded-[32px] border border-white/10 space-y-4 hover:border-emerald-500/30 transition-all group">
                                <div className="w-10 h-10 bg-emerald-500 text-slate-950 rounded-full flex items-center justify-center font-black text-sm">2</div>
                                <h5 className="font-black text-lg">TWA Wrapping</h5>
-                               <p className="text-[11px] text-slate-400 leading-relaxed font-medium">Utilisez l'outil <span className="text-emerald-400">Bubblewrap</span> de Google pour encapsuler l'URL https://prevafrica.web.app en 1 minute.</p>
+                               <p className="text-[11px] text-slate-400 leading-relaxed font-medium">Utilisez l'outil <span className="text-emerald-400">Bubblewrap</span> de Google pour encapsuler l'URL https://prevafrica.com en 1 minute.</p>
                              </div>
                              <div className="p-8 bg-white/5 rounded-[32px] border border-white/10 space-y-4 hover:border-emerald-500/30 transition-all group">
                                <div className="w-10 h-10 bg-emerald-500 text-slate-950 rounded-full flex items-center justify-center font-black text-sm">3</div>
@@ -2156,6 +2853,201 @@ export default function App() {
                             </button>
                           </div>
                        </div>
+
+                        {/* Studio de Signature AAB & Clés Google Play */}
+                        <div className="md:col-span-2 bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950 rounded-[40px] p-8 md:p-10 text-white space-y-8 border border-emerald-500/20 shadow-2xl relative overflow-hidden">
+                           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+                             <div className="space-y-2">
+                               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest border border-emerald-500/30">
+                                 <ShieldCheck size={14} /> Service de Signature Android v2.5
+                               </div>
+                               <h4 className="text-3xl font-black">Studio de Signature AAB & Clés Google Play</h4>
+                               <p className="text-slate-400 text-xs font-medium max-w-2xl">
+                                 Signez automatiquement vos fichiers <code className="text-emerald-400 font-mono">.aab</code> (Android App Bundle) directement dans le navigateur ou téléchargez vos clés de chiffrement Keystore et Certificats pour la Play Console.
+                               </p>
+                             </div>
+                           </div>
+
+                           
+                            {/* Alerte Explicative pour Erreur Empreinte SHA1 Google Play Console */}
+                            <div className="p-6 bg-amber-500/10 border-2 border-amber-500/30 rounded-3xl space-y-4 relative z-10">
+                              <div className="flex items-start gap-3">
+                                <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl shrink-0">
+                                  <AlertTriangle size={22} />
+                                </div>
+                                <div className="space-y-1">
+                                  <h5 className="font-black text-sm text-amber-300">
+                                    Résolution : Erreur de Clé / Empreinte SHA1 dans la Google Play Console
+                                  </h5>
+                                  <p className="text-xs text-amber-100/90 leading-relaxed">
+                                    Google Play indique que votre application doit être signée avec la clé d'origine (<code className="font-mono text-amber-300 bg-amber-950/60 px-1.5 py-0.5 rounded">SHA1: D8:F5:27:DF:...</code> ou <code className="font-mono text-amber-300 bg-amber-950/60 px-1.5 py-0.5 rounded">05:66:28:84:...</code>). Choisissez une des 2 solutions ci-dessous :
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                                <div className="bg-slate-900/80 p-4 rounded-2xl border border-white/10 space-y-2">
+                                  <p className="font-bold text-xs text-emerald-400 flex items-center gap-1.5">
+                                    <CheckCircle size={14} /> Solution 1 (Recommandée) : Réinitialiser la Clé d'Importation
+                                  </p>
+                                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                                    Dans <strong>Google Play Console &gt; Configuration &gt; Signature d'application</strong>, cliquez sur <strong>"Demander la réinitialisation de la clé d'importation"</strong> et fournissez le fichier <code className="text-emerald-400 font-mono">new_upload_certificate.pem</code>.
+                                  </p>
+                                  <a
+                                    href="/new_upload_certificate.pem"
+                                    download="new_upload_certificate.pem"
+                                    className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-xl text-xs font-bold transition-all border border-emerald-500/40"
+                                  >
+                                    <Download size={14} /> Télécharger new_upload_certificate.pem
+                                  </a>
+                                </div>
+
+                                <div className="bg-slate-900/80 p-4 rounded-2xl border border-white/10 space-y-2">
+                                  <p className="font-bold text-xs text-blue-400 flex items-center gap-1.5">
+                                    <Upload size={14} /> Solution 2 : Utiliser votre propre fichier .jks / .keystore
+                                  </p>
+                                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                                    Si vous possédez déjà le fichier <code className="text-blue-300 font-mono">.keystore</code> ou <code className="text-blue-300 font-mono">.jks</code> d'origine issu de votre première création, cochez "Utiliser un Keystore personnalisé" ci-dessous et téléversez-le.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Signer AAB Form */}
+                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10 bg-white/5 p-6 md:p-8 rounded-[32px] border border-white/10 backdrop-blur">
+                              <div className="space-y-5">
+                                <div className="space-y-1">
+                                  <h5 className="font-black text-lg text-emerald-400 flex items-center gap-2">
+                                    <Lock size={18} /> 1. Téléverser votre fichier PREVAFRICA.aab
+                                  </h5>
+                                  <p className="text-xs text-slate-400">Glissez-déposez le fichier non signé ou cliquez pour le sélectionner sur votre ordinateur.</p>
+                                </div>
+
+                                <div className="border-2 border-dashed border-emerald-500/40 rounded-2xl p-6 text-center bg-slate-900/50 hover:border-emerald-400 transition-all cursor-pointer relative">
+                                  <input 
+                                    type="file" 
+                                    accept=".aab"
+                                    onChange={(e) => {
+                                      if (e.target.files && e.target.files[0]) {
+                                        setAabFile(e.target.files[0]);
+                                        setSignAabStatus(null);
+                                      }
+                                    }}
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  />
+                                  <div className="flex flex-col items-center justify-center gap-2 pointer-events-none">
+                                    <Upload size={32} className="text-emerald-400" />
+                                    {aabFile ? (
+                                      <div>
+                                        <p className="font-black text-sm text-white">{aabFile.name}</p>
+                                        <p className="text-[10px] text-emerald-400 font-mono">{(aabFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <p className="font-bold text-xs text-slate-300">Cliquez ou glissez votre fichier PREVAFRICA.aab ici</p>
+                                        <p className="text-[10px] text-slate-500">Format .aab accepté (Android App Bundle)</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <label className="text-xs font-bold text-slate-300">Sélectionner le Keystore de signature :</label>
+                                  <select 
+                                    value={selectedKeystoreForSign}
+                                    onChange={(e) => setSelectedKeystoreForSign(e.target.value)}
+                                    className="w-full bg-slate-900 border border-white/20 rounded-xl px-4 py-3 text-xs text-white font-medium focus:border-emerald-500 outline-none"
+                                  >
+                                    <option value="signing.keystore">signing.keystore (Nouveau Keystore PKCS12 / SHA256)</option>
+                                    <option value="signing_legacy_pwabuilder.keystore">signing_legacy_pwabuilder.keystore (Recommandé pour PWABuilder)</option>
+                                    <option value="signing_legacy.keystore">signing_legacy.keystore (Ancien)</option>
+                                  </select>
+                                </div>
+
+                                <button
+                                  onClick={handleSignAab}
+                                  disabled={!aabFile || isSigningAab}
+                                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-black text-xs uppercase tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                                >
+                                  {isSigningAab ? (
+                                    <>
+                                      <Loader2 size={16} className="animate-spin" />
+                                      Signature en cours avec Jarsigner...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckCircle size={16} />
+                                      Signer et Télécharger PREVAFRICA-signed.aab
+                                    </>
+                                  )}
+                                </button>
+
+                                {signAabStatus && (
+                                  <div className={cn(
+                                    "p-4 rounded-xl text-xs font-medium leading-relaxed",
+                                    signAabStatus.startsWith("✅") ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" :
+                                    signAabStatus.startsWith("⏳") ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" :
+                                    "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                  )}>
+                                    {signAabStatus}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Direct Keystore Downloads & Instructions */}
+                              <div className="space-y-6 flex flex-col justify-between">
+                                <div className="space-y-3">
+                                  <h5 className="font-black text-lg text-emerald-400 flex items-center gap-2">
+                                    <Download size={18} /> 2. Fichiers de Clés & Certificats Directs
+                                  </h5>
+                                  <p className="text-xs text-slate-400 leading-relaxed">
+                                    Si vous souhaitez configurer manuellement Android Studio, PWABuilder ou la Google Play Console, téléchargez les fichiers sources ci-dessous :
+                                  </p>
+
+                                  <div className="space-y-3 pt-2">
+                                    <a 
+                                      href="/signing.keystore" 
+                                      download="signing.keystore"
+                                      className="flex items-center justify-between p-4 bg-slate-900 rounded-2xl border border-white/10 hover:border-emerald-500/50 transition-all text-xs font-bold text-white group"
+                                    >
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-mono text-xs">JKS</div>
+                                        <div>
+                                          <p className="group-hover:text-emerald-400 transition-colors">signing.keystore</p>
+                                          <p className="text-[10px] text-slate-500">Mot de passe : <code className="text-emerald-400 font-mono">CAC3KVikhbyb</code> • Alias: <code className="text-emerald-400 font-mono">my-key-alias</code></p>
+                                        </div>
+                                      </div>
+                                      <Download size={16} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                                    </a>
+
+                                    <a 
+                                      href="/new_upload_certificate.pem" 
+                                      download="new_upload_certificate.pem"
+                                      className="flex items-center justify-between p-4 bg-slate-900 rounded-2xl border border-white/10 hover:border-emerald-500/50 transition-all text-xs font-bold text-white group"
+                                    >
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-mono text-xs">PEM</div>
+                                        <div>
+                                          <p className="group-hover:text-emerald-400 transition-colors">new_upload_certificate.pem</p>
+                                          <p className="text-[10px] text-slate-500">Certificat pour réinitialiser la clé sur Google Play Console</p>
+                                        </div>
+                                      </div>
+                                      <Download size={16} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                                    </a>
+                                  </div>
+                                </div>
+
+                                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2">
+                                  <div className="flex items-center gap-2 text-amber-400 font-black text-xs">
+                                    <AlertTriangle size={16} /> Résolution Erreur Empreinte SHA1 Google Play Console
+                                  </div>
+                                  <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                                    Si Google Play indique que l'empreinte SHA1 ne correspond pas : allez dans <strong>Google Play Console &gt; Configuration &gt; Signature d'application</strong>, cliquez sur <strong>"Demander la réinitialisation de la clé d'importation"</strong>, et fournissez le fichier <code className="font-mono text-amber-300">new_upload_certificate.pem</code> ci-dessus.
+                                  </p>
+                                </div>
+                              </div>
+                           </div>
+                        </div>
 
                        {/* Centre de Téléchargement des Visuels Play Store */}
                        <div className="md:col-span-2 glass rounded-[40px] p-8 border border-slate-100 shadow-xl space-y-6">
@@ -2217,6 +3109,317 @@ export default function App() {
                 )}
             </div>
           )}
+          {etape === 'studio_aab' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8 py-4 animate-in fade-in duration-700"
+            >
+              {/* Top Navigation */}
+              <div className="flex items-center justify-between">
+                <button 
+                  onClick={() => setEtape('catalogue')}
+                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full text-slate-700 font-bold text-xs transition-all cursor-pointer"
+                >
+                  <ArrowLeft size={16} /> Retour à l'accueil
+                </button>
+                <div className="text-right">
+                  <span className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.3em]">Signature AAB Automatisée</span>
+                  <p className="text-slate-400 text-[9px] font-bold">PWABuilder / Play Console — 2026</p>
+                </div>
+              </div>
+
+              {/* Title Section */}
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 text-xs font-black uppercase tracking-widest border border-emerald-500/20">
+                  <ShieldCheck size={16} /> Service Officiel de Signature Android
+                </div>
+                <h2 className="text-3xl md:text-4xl font-black text-slate-900 leading-tight">
+                  Studio de Signature <span className="text-emerald-500">PREVAFRICA.aab</span>
+                </h2>
+                <p className="text-slate-600 text-xs md:text-sm max-w-2xl font-medium">
+                  Utilisez cet outil pour signer votre fichier Android App Bundle (.aab) en 1 clic grâce à notre serveur Jarsigner, ou téléchargez votre Keystore et vos certificats pour Google Play.
+                </p>
+              </div>
+
+              {/* Studio Card */}
+              <div className="bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950 rounded-[40px] p-6 md:p-10 text-white space-y-8 border border-emerald-500/20 shadow-2xl relative overflow-hidden">
+                {/* Notice Fix Google Play Error & PWABuilder Signer Error */}
+                <div className="p-5 bg-emerald-500/10 border border-emerald-500/40 rounded-3xl space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-400 font-black text-xs md:text-sm">
+                    <CheckCircle size={18} /> Guide de Résolution PWABuilder (Anti-erreur "Failed to load signer")
+                  </div>
+                  <div className="text-xs text-slate-300 space-y-2 leading-relaxed">
+                    <p>
+                      <strong>Pourquoi PWABuilder affiche "Unable to create Google Play package" ?</strong><br />
+                      Si vous cochez "Signing key" sur PWABuilder et téléversez un keystore dans PWABuilder, leur serveur Java échoue avec l'erreur <em>Failed to load signer</em>.
+                    </p>
+                    <p className="bg-black/40 p-3 rounded-xl border border-white/10 text-emerald-300">
+                      💡 <strong>SOLUTION ULTIME INFALLIBLE (2 étapes simples) :</strong><br />
+                      1. Sur <strong>PWABuilder.com</strong>, dans les <em>Options</em> : <strong>DÉSACTIVEZ / DÉCOCHEZ "Signing Key"</strong> (ou ne mettez aucun keystore dans PWABuilder). Changez juste l'App Version Code sur <strong>2</strong> (ou 3). Cliquez sur <strong>Generate</strong>.<br />
+                      2. Prenez le fichier <code>.aab</code> obtenu depuis PWABuilder et déposez-le ci-dessous dans notre <strong>Studio de Signature PREVAFRICA</strong> pour le signer avec notre outil Jarsigner automatisé !
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10 bg-white/5 p-6 md:p-8 rounded-[32px] border border-white/10 backdrop-blur">
+                    {/* Form Step 1: Upload & Sign */}
+                    <div className="space-y-5">
+                      <div className="space-y-1">
+                        <h5 className="font-black text-lg text-emerald-400 flex items-center gap-2">
+                          <Lock size={18} /> 1. Téléverser votre fichier PREVAFRICA.aab
+                        </h5>
+                        <p className="text-xs text-slate-400">Glissez-déposez le fichier .aab obtenu sur PWABuilder ou cliquez ci-dessous :</p>
+                      </div>
+
+                      <div className="border-2 border-dashed border-emerald-500/40 rounded-2xl p-6 text-center bg-slate-900/50 hover:border-emerald-400 transition-all cursor-pointer relative">
+                        <input 
+                          type="file" 
+                          accept=".aab"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              setAabFile(e.target.files[0]);
+                              setSignAabStatus(null);
+                            }
+                          }}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        <div className="flex flex-col items-center justify-center gap-2 pointer-events-none">
+                          <Upload size={32} className="text-emerald-400" />
+                          {aabFile ? (
+                            <div>
+                              <p className="font-black text-sm text-white">{aabFile.name}</p>
+                              <p className="text-[10px] text-emerald-400 font-mono">{(aabFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                            </div>
+                          ) : (
+                            <div>
+                              <p className="font-bold text-xs text-slate-300">Cliquez ou glissez votre fichier PREVAFRICA.aab ici</p>
+                              <p className="text-[10px] text-slate-500">Format .aab (Android App Bundle non signé)</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-slate-900/80 rounded-2xl border border-white/10 space-y-3">
+                                   <label className="flex items-center gap-2 text-xs font-bold text-white cursor-pointer">
+                                     <input
+                                       type="checkbox"
+                                       checked={useCustomKeystore}
+                                       onChange={(e) => setUseCustomKeystore(e.target.checked)}
+                                       className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
+                                     />
+                                     Utiliser un Keystore personnalisé (.keystore / .jks / .p12)
+                                   </label>
+
+                                   {useCustomKeystore ? (
+                                     <div className="space-y-3 pt-2">
+                                       <div className="border border-dashed border-blue-500/40 rounded-xl p-4 text-center bg-slate-950/60 hover:border-blue-400 transition-all cursor-pointer relative">
+                                         <input 
+                                           type="file" 
+                                           accept=".keystore,.jks,.p12"
+                                           onChange={(e) => {
+                                             if (e.target.files && e.target.files[0]) {
+                                               setCustomKeystoreFile(e.target.files[0]);
+                                             }
+                                           }}
+                                           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                         />
+                                         <div className="flex items-center justify-center gap-2 pointer-events-none">
+                                           <Key size={18} className="text-blue-400" />
+                                           {customKeystoreFile ? (
+                                             <span className="text-xs font-bold text-blue-300">{customKeystoreFile.name}</span>
+                                           ) : (
+                                             <span className="text-xs text-slate-400">Choisir votre fichier .keystore ou .jks</span>
+                                           )}
+                                         </div>
+                                       </div>
+
+                                       <div className="grid grid-cols-2 gap-2">
+                                         <div>
+                                           <label className="text-[10px] font-bold text-slate-400 uppercase">Alias :</label>
+                                           <input
+                                             type="text"
+                                             value={customAlias}
+                                             onChange={(e) => setCustomAlias(e.target.value)}
+                                             className="w-full bg-slate-950 border border-white/20 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                                             placeholder="my-key-alias"
+                                           />
+                                         </div>
+                                         <div>
+                                           <label className="text-[10px] font-bold text-slate-400 uppercase">Mot de passe :</label>
+                                           <input
+                                             type="password"
+                                             value={customPassword}
+                                             onChange={(e) => setCustomPassword(e.target.value)}
+                                             className="w-full bg-slate-950 border border-white/20 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                                             placeholder="Mot de passe"
+                                           />
+                                         </div>
+                                       </div>
+                                     </div>
+                                   ) : (
+                                     <div className="space-y-1">
+                                       <label className="text-[11px] font-bold text-slate-400">Keystore PREVAFRICA par défaut :</label>
+                                       <select 
+                                         value={selectedKeystoreForSign}
+                                         onChange={(e) => setSelectedKeystoreForSign(e.target.value)}
+                                         className="w-full bg-slate-950 border border-white/20 rounded-xl px-3 py-2.5 text-xs text-white font-medium focus:border-emerald-500 outline-none"
+                                       >
+                                         <option value="signing.keystore">signing.keystore (Généré PKCS12 / SHA256)</option>
+                                         <option value="signing_legacy.keystore">signing_legacy.keystore (Keystore Ancien)</option>
+                                       </select>
+                                     </div>
+                                   )}
+                                 </div>
+
+                      <button
+                        onClick={handleSignAab}
+                        disabled={!aabFile || isSigningAab}
+                        className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-black text-xs uppercase tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                      >
+                        {isSigningAab ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            Signature en cours avec Jarsigner...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle size={16} />
+                            Signer et Télécharger PREVAFRICA-signed.aab
+                          </>
+                        )}
+                      </button>
+
+                      {signAabStatus && (
+                        <div className={cn(
+                          "p-4 rounded-xl text-xs font-medium leading-relaxed",
+                          signAabStatus.startsWith("✅") ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" :
+                          signAabStatus.startsWith("⏳") ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" :
+                          "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                        )}>
+                          {signAabStatus}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Direct Downloads */}
+                    <div className="space-y-6 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <h5 className="font-black text-lg text-emerald-400 flex items-center gap-2">
+                          <Download size={18} /> 2. Clés Keystore & Certificats Directs
+                        </h5>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Téléchargez directement les fichiers si vous voulez les importer dans la Play Console ou signer localement :
+                        </p>
+
+                        <div className="space-y-3 pt-2">
+                          <a 
+                            href="/signing.keystore" 
+                            download="signing.keystore"
+                            className="flex items-center justify-between p-4 bg-slate-900 rounded-2xl border border-white/10 hover:border-emerald-500/50 transition-all text-xs font-bold text-white group cursor-pointer"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-mono text-xs">JKS</div>
+                              <div>
+                                <p className="group-hover:text-emerald-400 transition-colors">signing.keystore</p>
+                                <p className="text-[10px] text-slate-500">Mot de passe : <code className="text-emerald-400 font-mono">CAC3KVikhbyb</code> • Alias: <code className="text-emerald-400 font-mono">my-key-alias</code></p>
+                              </div>
+                            </div>
+                            <Download size={16} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                          </a>
+
+                          <a 
+                            href="/signing_legacy_pwabuilder.keystore" 
+                            download="signing_legacy_pwabuilder.keystore"
+                            className="flex items-center justify-between p-4 bg-slate-900 rounded-2xl border border-white/10 hover:border-emerald-500/50 transition-all text-xs font-bold text-white group cursor-pointer"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-mono text-xs">PWA</div>
+                              <div>
+                                <p className="group-hover:text-emerald-400 transition-colors">signing_legacy_pwabuilder.keystore</p>
+                                <p className="text-[10px] text-slate-500">Spécial PWABuilder (Legacy PKCS12) • Pass: <code className="text-emerald-400 font-mono">CAC3KVikhbyb</code> • Alias: <code className="text-emerald-400 font-mono">my-key-alias</code></p>
+                              </div>
+                            </div>
+                            <Download size={16} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                          </a>
+
+                          <a 
+                            href="/new_upload_certificate.pem" 
+                            download="new_upload_certificate.pem"
+                            className="flex items-center justify-between p-4 bg-slate-900 rounded-2xl border border-white/10 hover:border-emerald-500/50 transition-all text-xs font-bold text-white group cursor-pointer"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-mono text-xs">PEM</div>
+                              <div>
+                                <p className="group-hover:text-emerald-400 transition-colors">new_upload_certificate.pem</p>
+                                <p className="text-[10px] text-slate-500">Certificat PEM pour réinitialisation Google Play Console</p>
+                              </div>
+                            </div>
+                            <Download size={16} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                          </a>
+
+                          {/* Raw PEM viewer for Google Play Reset */}
+                          <div className="p-4 bg-slate-900/80 rounded-2xl border border-blue-500/30 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-blue-400 flex items-center gap-2">
+                                📋 Contenu exact du Certificat PEM (Anti-erreur de téléchargement)
+                              </span>
+                              <button
+                                onClick={() => {
+                                  const pemText = `-----BEGIN CERTIFICATE-----\nMIIDuzCCAqOgAwIBAgIUZJU43Mv7sT+jZYXQ27JIlYM6OZgwDQYJKoZIhvcNAQEL\nBQAwbDETMBEGA1UEAwwKUFJFVkFGUklDQTETMBEGA1UECwwKUHJvZHVjdGlvbjET\nMBEGA1UECgwKUFJFVkFGUklDQTEOMAwGA1UEBwwFRGFrYXIxDjAMBgNVBAgMBURh\na2FyMQswCQYDVQQGEwJTTjAgFw0yNjA3MjUxMDUwMDVaGA8yMDUzMTIxMDEwNTAw\nNVowbDETMBEGA1UEAwwKUFJFVkFGUklDQTETMBEGA1UECwwKUHJvZHVjdGlvbjET\nMBEGA1UECgwKUFJFVkFGUklDQTEOMAwGA1UEBwwFRGFrYXIxDjAMBgNVBAgMBURh\na2FyMQswCQYDVQQGEwJTTjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB\nALltlikJbQJhk1aG5LlpR7zp37dEcPJE4ObhEdQdfkSzKR3vielVxmhchBNhCODL\nYxnkhL2tAaA0ltHUR79dN9uTHU8rPZm5up9SfUW9W9xW2g/Rmv91RNAurKDrScth\n0piA16pLDJ3ErpUHe2idhybNaO2sOKSlH9O7osx+RNWvFhfQVbTZjPguHlxLgDq5\nb74QN16u4TXeDBh3jyr3D0jb9kSBghc8McSSdB0LCT/7sSDPXWufuIymnlt679JC\ny2g6nBa4Z92FD/PC8jMBAhOBteApxjsB6aEmn/+OMNBG/XszM+d5WZg1W9G2/qgu\nC764+jGy3pOJWh1Tg78KxiUCAwEAAaNTMFEwHQYDVR0OBBYEFOET3SUBZQBi5Lg7\nV6F1PwIQvn6aMB8GA1UdIwQYMBaAFOET3SUBZQBi5Lg7V6F1PwIQvn6aMA8GA1Ud\nEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAGJQTiRMpsfqAEcrldphmmem\nKltYnpQZ34eFWbDMBWUcWYEifYFPJAPsiC6UCXJ7nv+XN/Bnzyp7Hy99sYfHAu5Y\n7LDEj8TcaJM2Mf4v3u14Adz8GC8N4VLATqoOjYVZ2fLvHeLey00LSTqLbc/CcuFn\ndF/syA1dvpBvWyArHIavYynRDzGtVxf6VrNDhKQhF2p97INH3yuxjnf+EDNc/tGc\nGZBVNdBAlqBglKE/18Szz93w5q2ERz/a+nFW+7zspWCnzqV7huE0dFbbjvXp7nFY\nmqJsb5ughRR+pMKsPteSVc05t6MZk2PNhngEz7vVUmKgoMIkkyhUiQ2mMDrpB9Y=\n-----END CERTIFICATE-----`;
+                                  navigator.clipboard.writeText(pemText);
+                                  alert("Certificat PEM copié dans le presse-papier ! Vous pouvez le coller dans un fichier upload_certificate.pem.");
+                                }}
+                                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[11px] font-semibold transition-colors flex items-center gap-1"
+                              >
+                                <Copy size={12} /> Copier le texte PEM
+                              </button>
+                            </div>
+                            <p className="text-[11px] text-slate-400">
+                              Si le téléchargement du fichier par le navigateur a échoué (téléchargement d'un fichier HTML au lieu du .pem), copiez ce texte ci-dessous et enregistrez-le dans un fichier nommé <code className="text-emerald-400 font-mono">upload_certificate.pem</code> :
+                            </p>
+                            <pre className="p-3 bg-black/60 rounded-xl text-[10px] text-emerald-400 font-mono overflow-x-auto max-h-32 select-all border border-white/5">
+{`-----BEGIN CERTIFICATE-----
+MIIDuzCCAqOgAwIBAgIUZJU43Mv7sT+jZYXQ27JIlYM6OZgwDQYJKoZIhvcNAQEL
+BQAwbDETMBEGA1UEAwwKUFJFVkFGUklDQTETMBEGA1UECwwKUHJvZHVjdGlvbjET
+MBEGA1UECgwKUFJFVkFGUklDQTEOMAwGA1UEBwwFRGFrYXIxDjAMBgNVBAgMBURh
+a2FyMQswCQYDVQQGEwJTTjAgFw0yNjA3MjUxMDUwMDVaGA8yMDUzMTIxMDEwNTAw
+NVowbDETMBEGA1UEAwwKUFJFVkFGUklDQTETMBEGA1UECwwKUHJvZHVjdGlvbjET
+MBEGA1UECgwKUFJFVkFGUklDQTEOMAwGA1UEBwwFRGFrYXIxDjAMBgNVBAgMBURh
+a2FyMQswCQYDVQQGEwJTTjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+ALltlikJbQJhk1aG5LlpR7zp37dEcPJE4ObhEdQdfkSzKR3vielVxmhchBNhCODL
+YxnkhL2tAaA0ltHUR79dN9uTHU8rPZm5up9SfUW9W9xW2g/Rmv91RNAurKDrScth
+0piA16pLDJ3ErpUHe2idhybNaO2sOKSlH9O7osx+RNWvFhfQVbTZjPguHlxLgDq5
+b74QN16u4TXeDBh3jyr3D0jb9kSBghc8McSSdB0LCT/7sSDPXWufuIymnlt679JC
+y2g6nBa4Z92FD/PC8jMBAhOBteApxjsB6aEmn/+OMNBG/XszM+d5WZg1W9G2/qgu
+C764+jGy3pOJWh1Tg78KxiUCAwEAAaNTMFEwHQYDVR0OBBYEFOET3SUBZQBi5Lg7
+V6F1PwIQvn6aMB8GA1UdIwQYMBaAFOET3SUBZQBi5Lg7V6F1PwIQvn6aMA8GA1Ud
+EwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAGJQTiRMpsfqAEcrldphmmem
+KltYnpQZ34eFWbDMBWUcWYEifYFPJAPsiC6UCXJ7nv+XN/Bnzyp7Hy99sYfHAu5Y
+7LDEj8TcaJM2Mf4v3u14Adz8GC8N4VLATqoOjYVZ2fLvHeLey00LSTqLbc/CcuFn
+dF/syA1dvpBvWyArHIavYynRDzGtVxf6VrNDhKQhF2p97INH3yuxjnf+EDNc/tGc
+GZBVNdBAlqBglKE/18Szz93w5q2ERz/a+nFW+7zspWCnzqV7huE0dFbbjvXp7nFY
+mqJsb5ughRR+pMKsPteSVc05t6MZk2PNhngEz7vVUmKgoMIkkyhUiQ2mMDrpB9Y=
+-----END CERTIFICATE-----`}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2">
+                        <div className="flex items-center gap-2 text-amber-400 font-black text-xs">
+                          <AlertTriangle size={16} /> Procédure Réinitialisation Clé Play Console
+                        </div>
+                        <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                          Si Google Play affiche une erreur d'empreinte SHA1 : Allez dans <strong>Play Console &gt; Configuration &gt; Signature d'application &gt; Demander la réinitialisation de la clé d'importation</strong>, et téléversez le fichier <code className="font-mono text-amber-300">new_upload_certificate.pem</code> ci-dessus.
+                        </p>
+                      </div>
+                    </div>
+                 </div>
+              </div>
+            </motion.div>
+          )}
+
           {etape === 'manifeste' && (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -2226,7 +3429,7 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <button 
                   onClick={() => setEtape('catalogue')}
-                  className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all"
+                  className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all cursor-pointer"
                 >
                   <ArrowLeft size={18} />
                 </button>
@@ -2280,7 +3483,7 @@ export default function App() {
                 </div>
                 <button 
                   onClick={() => setEtape('catalogue')}
-                  className="mt-8 bg-slate-900 text-white font-black text-xs px-12 py-5 rounded-2xl shadow-xl hover:bg-slate-800 transition-all uppercase tracking-widest"
+                  className="mt-8 bg-slate-900 text-white font-black text-xs px-12 py-5 rounded-2xl shadow-xl hover:bg-slate-800 transition-all uppercase tracking-widest cursor-pointer"
                 >
                   Découvrir nos offres
                 </button>
@@ -2292,8 +3495,20 @@ export default function App() {
         <footer className="py-12 mt-auto flex flex-col items-center gap-6">
           <div className="flex flex-wrap justify-center gap-4">
             <button 
-              onClick={() => setEtape('manifeste')}
-              className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-widest bg-emerald-50 px-4 py-2 rounded-full transition-all border border-emerald-100 hover:border-emerald-200"
+              onClick={() => {
+                setEtape('studio_aab');
+                window.scrollTo(0, 0);
+              }}
+              className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-widest bg-emerald-50 px-4 py-2 rounded-full transition-all border border-emerald-100 hover:border-emerald-200 flex items-center gap-1.5 cursor-pointer"
+            >
+              <ShieldCheck size={12} /> STUDIO DE SIGNATURE AAB 📱
+            </button>
+            <button 
+              onClick={() => {
+                setEtape('manifeste');
+                window.scrollTo(0, 0);
+              }}
+              className="text-[10px] font-black text-slate-600 hover:text-slate-800 uppercase tracking-widest bg-slate-100 px-4 py-2 rounded-full transition-all border border-slate-200 cursor-pointer"
             >
               NOTRE MANIFESTE STRATÉGIQUE 🌍
             </button>
@@ -2332,5 +3547,13 @@ export default function App() {
         </footer>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
   );
 }

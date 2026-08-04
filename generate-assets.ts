@@ -275,7 +275,7 @@ async function generateIcon(size: number, outputPath: string) {
   // Petit coeur de santé/vie vert émeraude en bas à droite du P
   drawHeart(data, size, size, size/2 + Math.round(45*(size/512)), size/2 + Math.round(45*(size/512)), Math.round(40*(size/512)), COLOR_EMERALD);
   
-  await img.write(outputPath);
+  await img.write(outputPath as `${string}.${string}`);
   console.log(`[GENERATOR] Icône générée avec succès : ${outputPath} (${size}x${size})`);
 }
 
@@ -344,7 +344,7 @@ async function generatePhoneScreenshot(outputPath: string) {
     drawCircle(data, width, height, buttonX, 1790, 15, COLOR_EMERALD);
   });
   
-  await img.write(outputPath);
+  await img.write(outputPath as `${string}.${string}`);
   console.log(`[GENERATOR] Capture d'écran Mobile générée : ${outputPath}`);
 }
 
@@ -418,7 +418,7 @@ async function generateTabletScreenshot(outputPath: string) {
   // Lignes d'axe
   drawLine(data, width, height, startX + 20, 940, width - 60, 940, 3, COLOR_MUTED);
   
-  await img.write(outputPath);
+  await img.write(outputPath as `${string}.${string}`);
   console.log(`[GENERATOR] Capture d'écran Tablette générée : ${outputPath}`);
 }
 

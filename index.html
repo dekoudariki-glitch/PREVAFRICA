@@ -12,11 +12,198 @@
   <body>
     <div id="root"></div>
     <script>
+      // Automated PWA Cache Buster: unregisters stale service workers, clears old caches,
+      // and forces a hard reload ONCE on older client devices to guarantee they run the latest code.
+      (function() {
+        try {
+          var expectedBuster = 'v7_agricole_release'; // Incremented to trigger on all client browsers
+          var currentBuster = localStorage.getItem('prevafrica_cache_buster');
+          if (currentBuster !== expectedBuster) {
+            // Check if we've already attempted to reload in this session to prevent infinite reload loops
+            var sessionKey = 'prevafrica_reload_attempt_' + expectedBuster;
+            var alreadyReloaded = false;
+            try {
+              alreadyReloaded = !!sessionStorage.getItem(sessionKey);
+            } catch (se) {}
+
+            if (alreadyReloaded) {
+              console.warn("Already reloaded once in this session. Skipping cache buster reload to avoid infinite loop.");
+              return;
+            }
+
+            try {
+              sessionStorage.setItem(sessionKey, 'true');
+            } catch (se) {}
+
+            localStorage.setItem('prevafrica_cache_buster', expectedBuster);
+            
+            // Verify writing was successful before reloading
+            if (localStorage.getItem('prevafrica_cache_buster') !== expectedBuster) {
+              console.warn("Storage write verification failed. Disabling reload to prevent infinite loop.");
+              return;
+            }
+
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                var promises = [];
+                for (var i = 0; i < registrations.length; i++) {
+                  promises.push(registrations[i].unregister());
+                }
+                if (window.caches) {
+                  caches.keys().then(function(keys) {
+                    for (var j = 0; j < keys.length; j++) {
+                      promises.push(caches.delete(keys[j]));
+                    }
+                    Promise.all(promises).then(function() {
+                      window.location.reload(true);
+                    }).catch(function() {
+                      window.location.reload(true);
+                    });
+                  }).catch(function() {
+                    window.location.reload(true);
+                  });
+                } else {
+                  Promise.all(promises).then(function() {
+                    window.location.reload(true);
+                  }).catch(function() {
+                    window.location.reload(true);
+                  });
+                }
+              }).catch(function() {
+                window.location.reload(true);
+              });
+            } else {
+              window.location.reload(true);
+            }
+          }
+        } catch (e) {
+          console.error('Cache buster error:', e);
+        }
+      })();
+
+      // Force automatic healing & hard reload if a dynamic import chunk loading fails (e.g. stale cache reference)
+      window.addEventListener('error', function(e) {
+        var msg = e && e.message ? e.message : '';
+        if (msg.indexOf('Failed to fetch dynamically imported module') !== -1 || msg.indexOf('Importing a module script failed') !== -1) {
+          console.warn('Chunk or script load error detected. Auto-healing by unregistering service workers and purging caches...');
+          try {
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                for (var i = 0; i < regs.length; i++) {
+                  regs[i].unregister();
+                }
+              });
+            }
+            if (window.caches) {
+              caches.keys().then(function(keys) {
+                for (var j = 0; j < keys.length; j++) {
+                  caches.delete(keys[j]);
+                }
+              });
+            }
+            setTimeout(function() {
+              window.location.reload(true);
+            }, 600);
+          } catch (err) {
+            window.location.reload(true);
+          }
+        }
+      }, true);
+
+      // Register Service Worker for PWA compliance & offline support
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js')
-          .then(reg => console.log('Service Worker enregistré avec succès:', reg.scope))
-          .catch(err => console.error('Erreur enregistrement Service Worker:', err));
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            console.log('PWA ServiceWorker registered successfully:', reg.scope);
+          }).catch(function(err) {
+            console.warn('PWA ServiceWorker registration failed:', err);
+          });
+        });
       }
+
+      // Enhanced Dual-Layer Self-Healing: Instant and Timeout-Based Proactive Recovery Screen
+      window.__lastError = null;
+      window.__prevafrica_mounted = false;
+
+      function renderEmergencyScreen(message) {
+        var root = document.getElementById('root');
+        if (!root) return;
+
+        // Prevent double rendering
+        if (document.getElementById('emergency-panel')) return;
+
+        console.error("Rendering emergency recovery screen:", message);
+        root.innerHTML = 
+          '<div id="emergency-panel" style="min-height: 100vh; background-color: #0b0f19; color: #ffffff; padding: 2.5rem; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, -apple-system, sans-serif; text-align: center; box-sizing: border-box; position: fixed; inset: 0; z-index: 99999; animation: fadeIn 0.4s ease-out;">' +
+            '<style>' +
+              '@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }' +
+            '</style>' +
+            '<div style="width: 80px; height: 80px; background-color: rgba(16, 185, 129, 0.1); border: 1.5px solid rgba(16, 185, 129, 0.2); border-radius: 24px; display: flex; align-items: center; justify-content: center; margin-bottom: 2rem;">' +
+              '<svg style="width: 36px; height: 36px; color: #10b981;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">' +
+                '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />' +
+              '</svg>' +
+            '</div>' +
+            '<h1 style="font-size: 1.75rem; font-weight: 900; margin-bottom: 0.5rem; letter-spacing: -0.025em; color: #10b981; font-style: italic;">PREV<span style="color: #ffffff;">AFRICA</span></h1>' +
+            '<p style="color: #94a3b8; font-size: 0.95rem; max-width: 440px; margin-bottom: 2rem; line-height: 1.6; font-weight: 500;">' +
+              'L\'application n\'a pas pu démarrer correctement sur votre appareil en raison d\'un problème de cache local ou d\'une incompatibilité de navigateur temporaire.' +
+            '</p>' +
+            '<div id="err-details" style="background-color: rgba(239, 68, 68, 0.05); border: 1.5px dashed rgba(239, 68, 68, 0.2); border-radius: 1.25rem; padding: 1.25rem; font-family: monospace; font-size: 0.75rem; color: #f87171; max-width: 520px; width: 100%; word-break: break-all; margin-bottom: 2.5rem; text-align: left; line-height: 1.5; box-sizing: border-box;">' +
+              '<span style="font-weight: 800; text-transform: uppercase; display: block; margin-bottom: 0.25rem; letter-spacing: 0.05em;">Détails techniques :</span>' + message +
+            '</div>' +
+            '<button id="btn-reset" style="padding: 0.95rem 2rem; font-weight: 800; font-size: 0.9rem; background-color: #10b981; color: #0b0f19; border: none; border-radius: 1rem; cursor: pointer; transition: all 0.2s; box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.2); letter-spacing: 0.025em; text-transform: uppercase;">' +
+              'Vider le Cache & Relancer l\'App' +
+            '</button>' +
+          '</div>';
+
+        var btn = document.getElementById('btn-reset');
+        if (btn) {
+          btn.onclick = function() {
+            try {
+              localStorage.clear();
+              sessionStorage.clear();
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(regs) {
+                  for (var i = 0; i < regs.length; i++) regs[i].unregister();
+                });
+              }
+              if (window.caches) {
+                caches.keys().then(function(keys) {
+                  for (var j = 0; j < keys.length; j++) caches.delete(keys[j]);
+                });
+              }
+            } catch(e) {}
+            setTimeout(function() {
+              window.location.reload(true);
+            }, 500);
+          };
+        }
+      }
+
+      window.addEventListener('error', function(e) {
+        if (e && e.message) {
+          window.__lastError = e.message;
+          console.warn("Global script error captured:", e.message);
+        }
+      });
+
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e && e.reason) {
+          var errorMsg = e.reason.message || String(e.reason);
+          window.__lastError = errorMsg;
+          console.warn("Unhandled promise rejection captured:", errorMsg);
+        }
+      });
+
+      // Self-healing guard: if after 10 seconds the app root is completely empty, show fallback
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var isEmpty = root && (!root.innerHTML || root.innerHTML.trim() === '');
+        if (!window.__prevafrica_mounted && isEmpty) {
+          console.error("React application failed to mount on load.");
+          var errorDetail = window.__lastError || "Délai d'attente d'initialisation dépassé (Stuck on loading/splash). Problème potentiel de cache de l'ancien bundle ou de compatibilité WebView.";
+          renderEmergencyScreen(errorDetail);
+        }
+      }, 10000);
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

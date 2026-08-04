@@ -1,0 +1,50 @@
+name: Build PREVAFRICA Android AAB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-aab:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      - name: Initialize Bubblewrap TWA Project
+        run: |
+          bubblewrap init --manifest="https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/manifest.json" --directory="./twa-build"
+
+      - name: Configure Version Code and Package Name
+        run: |
+          cd twa-build
+          # Ensure package ID is com.devkouda.prevafrica and versionCode is 27 (higher than previous 25/26)
+          sed -i 's/"appVersionCode": 1/"appVersionCode": 27/g' twa-manifest.json
+          sed -i 's/"packageId": ".*"/"packageId": "com.devkouda.prevafrica"/g' twa-manifest.json
+
+      - name: Build Signed AAB
+        run: |
+          cd twa-build
+          bubblewrap build
+
+      - name: Upload AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PREVAFRICA-v27-signed.aab
+          path: twa-build/*.aab

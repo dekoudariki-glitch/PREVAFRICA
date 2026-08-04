@@ -5,7 +5,9 @@
       "namespace": "android_app",
       "package_name": "com.devkouda.prevafrica",
       "sha256_cert_fingerprints": [
-        "BB:12:89:68:36:11:CB:65:6A:29:7D:7D:4C:D4:9A:6E:92:C9:74:99:BA:84:C2:B5:11:7A:5E:53:61:80:BA:2A"
+        "BB:12:89:68:36:11:CB:65:6A:29:7D:7D:4C:D4:9A:6E:92:C9:74:99:BA:84:C2:B5:11:7A:5E:53:61:80:BA:2A",
+        "17:2D:EE:03:8E:F4:63:6B:E7:F8:4A:2E:1F:1B:91:1B:B7:0A:EA:DE:EB:87:98:A3:E4:B6:C8:28:0A:89:A1:C6",
+        "6F:8B:1E:56:56:FC:CC:8E:9D:D5:8E:76:07:A3:95:0C:82:83:78:DA:14:DF:AD:27:45:C9:6F:0C:DF:F6:1E:92"
       ]
     }
   }

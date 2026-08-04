@@ -1,0 +1,18 @@
+steps:
+  # Step 1: Install Node, Java 17, and Bubblewrap CLI
+  - name: 'gcr.io/cloud-builders/npm'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        npm install -g @bubblewrap/cli
+        bubblewrap init --manifest="https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/manifest.json" --directory="./twa-build"
+        cd twa-build
+        sed -i 's/"appVersionCode": 1/"appVersionCode": 27/g' twa-manifest.json
+        sed -i 's/"packageId": ".*"/"packageId": "com.devkouda.prevafrica"/g' twa-manifest.json
+        bubblewrap build
+
+artifacts:
+  objects:
+    location: 'gs://$PROJECT_ID-aab-builds'
+    paths: ['twa-build/*.aab']

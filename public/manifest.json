@@ -1,5 +1,5 @@
 {
-  "id": "/?source=pwa",
+  "id": "com.devkouda.prevafrica",
   "name": "PREVAFRICA - Solutions de Prévoyance Panafricaine",
   "short_name": "PREVAFRICA",
   "description": "Première plateforme panafricaine de prévoyance, santé et micro-crédit adaptée aux zones CFA.",
@@ -12,16 +12,6 @@
   "dir": "ltr",
   "scope": "/",
   "prefer_related_applications": false,
-  "iarc_rating_id": "0000",
-  "display_override": ["standalone", "window-controls-overlay"],
-  "scope_extensions": [
-    {
-      "origin": "*.run.app"
-    }
-  ],
-  "launch_handler": {
-    "client_mode": "focus-existing"
-  },
   "icons": [
     {
       "src": "/images/prevafrica_icon_192.png",
