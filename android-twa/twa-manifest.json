@@ -1,0 +1,38 @@
+{
+  "packageId": "com.devkouda.prevafrica",
+  "host": "ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app",
+  "name": "PREVAFRICA",
+  "launcherName": "PREVAFRICA",
+  "display": "standalone",
+  "themeColor": "#10B981",
+  "themeColorDark": "#0F172A",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#0F172A",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/images/prevafrica_icon_512.png",
+  "maskableIconUrl": "https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/images/prevafrica_icon_512.png",
+  "appVersionName": "1.0.27",
+  "appVersionCode": 27,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  },
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": "true",
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "orientation": "default",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": []
+}

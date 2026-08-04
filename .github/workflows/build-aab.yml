@@ -10,13 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -24,27 +19,44 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
       - name: Install Bubblewrap CLI
         run: npm install -g @bubblewrap/cli
 
-      - name: Initialize Bubblewrap TWA Project
+      - name: Generate Android Signing Keystore
         run: |
-          bubblewrap init --manifest="https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/manifest.json" --directory="./twa-build"
+          cd android-twa
+          if [ ! -f android.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore android.keystore \
+              -alias android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass prevafrica123 \
+              -keypass prevafrica123 \
+              -dname "CN=PREVAFRICA, OU=Dev, O=PREVAFRICA, L=Dakar, S=Dakar, C=SN"
+          fi
 
-      - name: Configure Version Code and Package Name
+      - name: Generate Android TWA Project
         run: |
-          cd twa-build
-          # Ensure package ID is com.devkouda.prevafrica and versionCode is 27 (higher than previous 25/26)
-          sed -i 's/"appVersionCode": 1/"appVersionCode": 27/g' twa-manifest.json
-          sed -i 's/"packageId": ".*"/"packageId": "com.devkouda.prevafrica"/g' twa-manifest.json
+          cd android-twa
+          bubblewrap update --skipExisting
 
-      - name: Build Signed AAB
+      - name: Build Signed Android App Bundle (.aab)
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: prevafrica123
+          BUBBLEWRAP_KEY_PASSWORD: prevafrica123
         run: |
-          cd twa-build
+          cd android-twa
           bubblewrap build
 
-      - name: Upload AAB Artifact
+      - name: Upload Signed AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PREVAFRICA-v27-signed.aab
-          path: twa-build/*.aab
+          name: PREVAFRICA-v27-signed
+          path: android-twa/*.aab
