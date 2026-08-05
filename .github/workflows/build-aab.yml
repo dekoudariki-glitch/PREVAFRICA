@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -19,25 +19,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Node.js 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
-      - name: Install Bubblewrap CLI
-        run: npm install -g @bubblewrap/cli
-
-      - name: Configure Bubblewrap Non-Interactive Mode
+      - name: Generate Release Keystore
         run: |
-          mkdir -p ~/.bubblewrap
-          echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
-
-      - name: Generate Android Signing Keystore
-        run: |
-          cd android-twa
-          if [ ! -f android.keystore ]; then
+          cd android-app/app
+          if [ ! -f release.keystore ]; then
             keytool -genkeypair -v \
-              -keystore android.keystore \
+              -keystore release.keystore \
               -alias android \
               -keyalg RSA \
               -keysize 2048 \
@@ -47,21 +37,13 @@ jobs:
               -dname "CN=PREVAFRICA, OU=Dev, O=PREVAFRICA, L=Dakar, S=Dakar, C=SN"
           fi
 
-      - name: Generate Android TWA Project
+      - name: Build Android App Bundle (.aab) with Gradle
         run: |
-          cd android-twa
-          bubblewrap update --skipExisting
-
-      - name: Build Signed Android App Bundle (.aab)
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: prevafrica123
-          BUBBLEWRAP_KEY_PASSWORD: prevafrica123
-        run: |
-          cd android-twa
-          bubblewrap build
+          cd android-app
+          gradle bundleRelease --no-daemon
 
       - name: Upload Signed AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PREVAFRICA-v27-signed
-          path: android-twa/*.aab
+          name: PREVAFRICA-v27-signed.aab
+          path: android-app/app/build/outputs/bundle/release/*.aab

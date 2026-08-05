@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.devkouda.prevafrica'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.devkouda.prevafrica"
+        minSdk 21
+        targetSdk 34
+        versionCode 27
+        versionName "1.0.27"
+
+        manifestPlaceholders = [
+            hostName: "ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app",
+            defaultUrl: "https://ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app/",
+            launcherName: "PREVAFRICA",
+            assetStatements: '[]'
+        ]
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("release.keystore")
+            storePassword "prevafrica123"
+            keyAlias "android"
+            keyPassword "prevafrica123"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.android.comply:android-browser-helper:2.5.0'
+}
