@@ -20,16 +20,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.2'
 
-      - name: Configure Android SDK Path & Licenses
+      - name: Configure Android SDK Path
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android-app/local.properties
-          mkdir -p $ANDROID_HOME/licenses
-          printf "24833b298291be87002514318a362a79239eee11\n84831b9409646a918e30573bab4c9c91346d8abd\nd93811492197d10d393e8a18f02103a7638053f3\ne967250453061447d97042c06d234a6410d42126\n60100719fe09fc7d51d85521602d5161a0f8b296\n" > $ANDROID_HOME/licenses/android-sdk-license
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Generate Release Keystore
         run: |
@@ -49,11 +52,12 @@ jobs:
       - name: Build Android App Bundle (.aab) with Gradle
         run: |
           cd android-app
-          gradle bundleRelease --no-daemon --stacktrace
+          gradle bundleRelease --stacktrace
 
       - name: Upload Signed AAB Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PREVAFRICA-v28-signed
           path: android-app/app/build/outputs/bundle/release/*.aab
+
 
