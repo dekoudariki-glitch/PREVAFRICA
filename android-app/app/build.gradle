@@ -8,10 +8,10 @@ android {
 
     defaultConfig {
         applicationId "com.devkouda.prevafrica"
-        minSdk 21
+        minSdk 26
         targetSdk 34
-        versionCode 27
-        versionName "1.0.27"
+        versionCode 28
+        versionName "1.0.28"
 
         manifestPlaceholders = [
             hostName: "ais-pre-y5olwmfv5gwbwtwff223on-240846636508.europe-west2.run.app",
